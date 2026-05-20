@@ -1,66 +1,105 @@
-# codebase-skill — Semantic Code Indexing & Search
+<div align="center">
 
-Turn any code repository into a searchable knowledge base. Tree-sitter parsing, Ollama embeddings (nomic-embed-text), pgvector storage.
+# codebase-skill
 
-Instead of loading entire files into context, search surgically for the chunks you need — functions, classes, or concepts.
+**Semantic Code Search for AI Agents**
 
-## Architecture
+*Stop feeding entire repos to your context window. Search surgically instead.*
+
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org)
+[![Tree-sitter](https://img.shields.io/badge/tree--sitter-0.21-green.svg)](https://tree-sitter.github.io)
+[![pgvector](https://img.shields.io/badge/pgvector-0.6-orange.svg)](https://github.com/pgvector/pgvector)
+[![Ollama](https://img.shields.io/badge/ollama-nomic--embed--text-purple.svg)](https://ollama.com)
+[![MCP](https://img.shields.io/badge/MCP-stdio-black.svg)](https://modelcontextprotocol.io)
+[![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey.svg)](LICENSE)
+
+</div>
+
+---
+
+## Why?
+
+AI agents waste tokens reading entire files they don't need. A 500k-LOC repo becomes a 30-minute scroll fest. This skill turns your codebase into a **searchable vector database** — the agent asks a question, gets 8–15 precise chunks back, and skips the noise.
+
+**Before:** "Let me read all 47 files in `src/auth/` to find how JWT validation works..."
+**After:** One semantic query → the 3 functions that matter, with line numbers.
+
+This isn't a search engine for humans. It's a **RAG backbone for AI agents** — exposed as MCP tools your agent calls like any other tool.
+
+---
+
+## How It Works
 
 ```
-Repository → Tree-sitter parser → Semantic chunks → Ollama embed → pgvector
-                                                                    ↓
-Query → Ollama embed → cosine similarity search → ranked chunks
+  ┌─────────────┐     ┌──────────────┐     ┌────────────────┐     ┌──────────┐
+  │  Repository  │────▶│  Tree-sitter │────▶│  Ollama embed  │────▶│  pgvector │
+  │  (any lang)  │     │  chunking    │     │  nomic (768d)  │     │  storage  │
+  └─────────────┘     └──────────────┘     └────────────────┘     └──────────┘
+                                                                    │
+  ┌─────────────┐     ┌──────────────┐     ┌────────────────┐        │
+  │  Agent gets │◀────│  Ranked      │◀────│  Cosine        │◀───────┘
+  │  relevant   │     │  chunks      │     │  similarity    │
+  │  code only  │     │  + metadata  │     │  search        │
+  └─────────────┘     └──────────────┘     └────────────────┘
 ```
 
-## Components
+**Parsing is structural, not naive.** Tree-sitter chunks by functions, classes, and methods — not by arbitrary line splits. Each chunk carries its symbol name, file path, and line numbers so the agent knows exactly where it landed.
 
-| File | Purpose |
-|------|---------|
-| `config.py` | Configuration via env vars (DB, Ollama, API) |
-| `parser.py` | Tree-sitter chunking by function/class (25 languages) |
-| `embedder.py` | Ollama nomic-embed-text, 768-dim, retry+backoff |
-| `indexer.py` | Repository walker + incremental reindexing |
-| `search.py` | Cosine similarity search with filters |
-| `mcp_server.py` | MCP stdio server (3 tools: search, file_context, stats) |
-| `api.py` | FastAPI HTTP server (optional) |
-| `cli.py` | CLI interface |
-| `init_db.sql` | Database schema (tables, indexes, upsert function) |
-| `deploy.sh` | Full deployment script |
-| `bin/cbsearch` | CLI shortcut: semantic search |
-| `bin/cbcontext` | CLI shortcut: file context + related chunks |
-| `bin/cbstats` | CLI shortcut: indexing statistics |
+**Incremental reindexing** — only changed files get re-parsed and re-embedded. Re-index a modified repo in seconds, not minutes.
 
-## Quick Deploy
+---
+
+## Tech Stack
+
+| Layer | Tech | Why |
+|-------|------|-----|
+| **Parsing** | [Tree-sitter](https://tree-sitter.github.io) + tree-sitter-languages | AST-aware chunking by function/class, not line splits. 25 languages. |
+| **Embeddings** | [Ollama](https://ollama.com) + nomic-embed-text | Fully local, 768-dim, good code understanding. No data leaves your machine. |
+| **Storage** | [PostgreSQL](https://postgresql.org) + [pgvector](https://github.com/pgvector/pgvector) | HNSW index for sub-ms cosine search. ACID, proven, no new infra. |
+| **Agent Interface** | [MCP](https://modelcontextprotocol.io) (stdio) | Standard protocol — works with Hermes, Claude Code, Cursor, Pi, Codex, any MCP client. |
+| **API** | [FastAPI](https://fastapi.tiangolo.com) | Optional HTTP endpoints. Same logic, REST access. |
+| **CLI** | argparse | `cbsearch`, `cbcontext`, `cbstats` — terminal-first, scriptable. |
+
+---
+
+## 3 MCP Tools Your Agent Gets
+
+| Tool | What it does | When to use |
+|------|-------------|-------------|
+| `search` | Semantic search with filters (language, file pattern, repo) | "Where is auth implemented?" "Find all database connection code" |
+| `file_context` | A file's chunks + semantically related chunks from other files | Understanding a file and its dependencies without reading everything |
+| `stats` | Chunk count, file count, language count | "Is this repo indexed?" "How big is the codebase?" |
+
+---
+
+## 25 Languages
+
+Python, JavaScript, TypeScript, TSX, JSX, Go, Rust, Java, C, C++, C#, Ruby, PHP, Swift, Kotlin, Scala, Lua, R, Bash, SQL, HTML, CSS, JSON, YAML, TOML, Markdown.
+
+Don't see yours? Tree-sitter supports [many more](https://tree-sitter.github.io/tree-sitter/) — just add the grammar.
+
+---
+
+## Quick Start
 
 ### Prerequisites
 
-- PostgreSQL 15+ with pgvector extension available
+- PostgreSQL 15+ (with sudo to create extensions)
 - Python 3.11+
-- Ollama running with nomic-embed-text model
+- Ollama running (`ollama serve`) with nomic-embed-text (`ollama pull nomic-embed-text`)
 
-### 1. Run deploy.sh
-
-```bash
-bash deploy.sh              # interactive (prompts for DB password)
-bash deploy.sh <password>    # non-interactive
-```
-
-This creates: DB user, database, pgvector extension, tables, Python venv + dependencies.
-
-### 2. Configure environment
-
-Set these variables in your agent's environment (e.g. `~/.hermes/.env`):
+### Deploy
 
 ```bash
-CODEINDEX_DB_PASSWORD=your_password   # required
-# All others have sensible defaults — see .env.example
+git clone <this-repo> /data/codebase-skill
+bash deploy.sh <db_password>
 ```
 
-### 3. Configure MCP server
+That one command creates: DB user, database, pgvector extension, tables, Python venv + all dependencies, and runs a verification check.
 
-#### Hermes Agent
+### Configure your agent
 
-Add to `~/.hermes/config.yaml`:
+**Hermes Agent** — `~/.hermes/config.yaml`:
 
 ```yaml
 mcp_servers:
@@ -71,9 +110,7 @@ mcp_servers:
       CODEINDEX_DB_PASSWORD: "${CODEINDEX_DB_PASSWORD}"
 ```
 
-**Important:** Hermes filters subprocess env vars. You need the `env` block to pass `CODEINDEX_DB_PASSWORD` through. The MCP server auto-loads `~/.hermes/.env`, but the filter prevents inherited env. The `env` block ensures the variable reaches the subprocess.
-
-#### Other MCP clients (Claude Code, Cursor, etc.)
+**Claude Code / Cursor / any MCP client:**
 
 ```json
 {
@@ -81,58 +118,27 @@ mcp_servers:
     "codebase-skill": {
       "command": "/path/to/codebase-skill/.venv/bin/python3",
       "args": ["/path/to/codebase-skill/mcp_server.py"],
-      "env": {
-        "CODEINDEX_DB_PASSWORD": "your_password"
-      }
+      "env": { "CODEINDEX_DB_PASSWORD": "your_password" }
     }
   }
 }
 ```
 
-### 4. Index your first repo
+### Index & search
 
 ```bash
-cd /data/codebase-skill
+# Index a repo (first time: parses + embeds everything)
 .venv/bin/python3 cli.py index /path/to/repo
-```
 
-Or via API:
-```bash
-curl -X POST http://localhost:8900/index \
-  -H "Content-Type: application/json" \
-  -d '{"repo_path": "/path/to/repo"}'
-```
-
-### 5. Verify
-
-```bash
-# CLI
+# Search from terminal
 .venv/bin/python3 cli.py search "authentication middleware"
+./bin/cbsearch "database connection pool" --language python --top-k 5
 
-# MCP tools (from your agent)
-# mcp_codebase_search(query="authentication middleware")
-# mcp_codebase_file_context(file_path="/path/to/file.py")
-# mcp_codebase_stats()
+# Or let your agent do it via MCP tools
+# → mcp_codebase_search(query="authentication middleware")
 ```
 
-## MCP Tools
-
-| Tool | Description |
-|------|-------------|
-| `search` | Semantic search across indexed codebases. Filters: language, file_pattern, repo_path, min_score |
-| `file_context` | Get a file's chunks + semantically related chunks from other files |
-| `stats` | Indexing statistics: total chunks, files, languages |
-
-## API Endpoints (optional — run `cli.py serve`)
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/index` | POST | Index a repository |
-| `/search` | POST | Semantic search |
-| `/file-context` | POST | File + related chunks |
-| `/stats` | GET | Indexing statistics |
-| `/repository` | DELETE | Remove indexed repo |
-| `/health` | GET | Health check |
+---
 
 ## Configuration
 
@@ -142,42 +148,57 @@ curl -X POST http://localhost:8900/index \
 | `CODEINDEX_DB_PORT` | 5432 | PostgreSQL port |
 | `CODEINDEX_DB_NAME` | codeindex | Database name |
 | `CODEINDEX_DB_USER` | codeindex | DB user |
-| `CODEINDEX_DB_PASSWORD` | (required) | DB password |
+| `CODEINDEX_DB_PASSWORD` | **(required)** | DB password |
 | `CODEINDEX_EMBED_MODEL` | nomic-embed-text | Ollama embedding model |
 | `CODEINDEX_OLLAMA_BASE` | http://localhost:11434 | Ollama API base |
 | `CODEINDEX_API_HOST` | 127.0.0.1 | API server host |
 | `CODEINDEX_API_PORT` | 8900 | API server port |
 
-## Supported Languages (25)
+---
 
-Python, JavaScript, TypeScript, TSX, JSX, Go, Rust, Java, C, C++, C#, Ruby, PHP, Swift, Kotlin, Scala, Lua, R, Bash, SQL, HTML, CSS, JSON, YAML, TOML, Markdown.
+## The "Aha" Moment
 
-## Troubleshooting
+Context windows are expensive and finite. This skill turns a **read-everything** agent into a **search-then-read** agent:
 
-| Issue | Fix |
-|-------|-----|
-| pgvector extension missing | `sudo -u postgres psql -d codeindex -c 'CREATE EXTENSION IF NOT EXISTS vector;'` |
-| tree-sitter version conflict | Use `tree-sitter<0.22` + `tree-sitter-languages>=1.10` |
-| Ollama not running | `curl http://localhost:11434/api/tags` |
-| nomic-embed-text missing | `ollama pull nomic-embed-text` |
-| Zero vectors (Ollama down) | Check logs, search returns random results |
-| MCP tools not appearing | Check `env` block in MCP config — Hermes filters subprocess env |
-| DB connection refused | Verify PostgreSQL running, check `CODEINDEX_DB_*` vars |
+| Scenario | Without codebase-skill | With codebase-skill |
+|----------|----------------------|-------------------|
+| "How does auth work?" | Read 47 files, 200k tokens | 1 query, 10 chunks, 5k tokens |
+| Understanding a new file | Read it + guess dependencies | `file_context` finds related code automatically |
+| "Where is X used?" | Grep, hope it's named consistently | Semantic search finds it even with different naming |
+| Large monorepo | Not feasible — exceeds context | Sub-ms vector search, any size |
 
-## Migration from Another Host
+**Your agent stays fast, focused, and within budget.** That's the whole point.
 
-```bash
-# 1. Copy the directory
-rsync -av --exclude='.venv' --exclude='venv' --exclude='__pycache__' \
-    /data/codebase-skill/ user@newhost:/data/codebase-skill/
+---
 
-# 2. On the new host
-cd /data/codebase-skill
-bash deploy.sh <password>
+## Project Structure
 
-# 3. Re-index your repos (data is in PostgreSQL, not in files)
-.venv/bin/python3 cli.py index /path/to/repo
 ```
+codebase-skill/
+├── mcp_server.py      # MCP stdio server (3 tools)
+├── config.py          # Env-based configuration
+├── parser.py           # Tree-sitter chunking (25 languages)
+├── embedder.py         # Ollama embeddings + retry/backoff
+├── indexer.py          # Repository walker + incremental reindex
+├── search.py           # Cosine similarity search + filters
+├── api.py              # FastAPI HTTP server (optional)
+├── cli.py              # CLI interface
+├── init_db.sql         # Database schema
+├── deploy.sh           # Full one-command deployment
+├── setup_db.sh         # DB-only setup (legacy)
+├── requirements.txt    # Python dependencies
+├── .env.example        # Environment variables template
+├── SKILL.md            # Hermes Agent skill definition
+├── README.md           # This file
+├── PROGRESSION.md      # Development history
+├── info-db.txt         # DB setup notes
+└── bin/
+    ├── cbsearch        # CLI: semantic search
+    ├── cbcontext       # CLI: file context + related chunks
+    └── cbstats         # CLI: indexing statistics
+```
+
+---
 
 ## License
 
