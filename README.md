@@ -49,6 +49,41 @@ This isn't a search engine for humans. It's a **RAG backbone for AI agents** —
 
 ---
 
+## Benchmark: Context Loading
+
+Real benchmark on a mid-size project (AIssistant: 502 chunks, 81 source files, ~1.2M chars). Eight representative queries, three strategies compared:
+
+| Strategy | What it does | Avg time | Avg context tokens |
+|----------|-------------|----------|-------------------|
+| **Naive Traditional** | Grep keywords → read all matching files | 16ms | ~299K |
+| **Smart Traditional** | Grep keywords → read top-5 files by hit count | 18ms | ~184K |
+| **pgvector (this skill)** | Embed query → cosine similarity → top-10 chunks | 100ms | **~3K** |
+
+### The numbers
+
+```
+Query                                      Naive Trad       Smart Trad       pgvector
+                                            time/tokens      time/tokens      time/tokens
+────────────────────────────────────────────────────────────────────────────────────────────
+how does authentication work                19ms/302Ktok     17ms/213Ktok      92ms/3Ktok
+send an email via gmail                     16ms/308Ktok     19ms/213Ktok     122ms/4Ktok
+calendar event creation                     16ms/277Ktok     16ms/190Ktok      87ms/4Ktok
+telegram bot message handler                15ms/285Ktok     18ms/210Ktok      95ms/3Ktok
+error handling and retries                  15ms/304Ktok     17ms/200Ktok      91ms/1Ktok
+how is the agent run loop structured        16ms/308Ktok     20ms/211Ktok     133ms/3Ktok
+memory and context management               15ms/305Ktok     17ms/200Ktok      88ms/4Ktok
+Google Workspace OAuth flow                16ms/303Ktok     17ms/36Ktok        89ms/2Ktok
+```
+
+### Takeaway
+
+- **97× less context** than naive grep-all, **60× less** than smart top-5 file reading.
+- Trade-off: ~100ms per query (embedding + vector search) vs ~17ms for local file reads.
+- That 100ms buys you **semantically ranked, relevant chunks** instead of whole files full of noise.
+- At current LLM pricing, 296K wasted tokens per query is the real cost — not the 80ms latency difference.
+
+---
+
 ## Tech Stack
 
 | Layer | Tech | Why |
@@ -209,41 +244,6 @@ Context windows are expensive and finite. This skill turns a **read-everything**
 | Large monorepo | Not feasible — exceeds context | Sub-ms vector search, any size |
 
 **Your agent stays fast, focused, and within budget.** That's the whole point.
-
----
-
-## Benchmark: Context Loading
-
-Real benchmark on a mid-size project (AIssistant: 502 chunks, 81 source files, ~1.2M chars). Eight representative queries, three strategies compared:
-
-| Strategy | What it does | Avg time | Avg context tokens |
-|----------|-------------|----------|-------------------|
-| **Naive Traditional** | Grep keywords → read all matching files | 16ms | ~299K |
-| **Smart Traditional** | Grep keywords → read top-5 files by hit count | 18ms | ~184K |
-| **pgvector (this skill)** | Embed query → cosine similarity → top-10 chunks | 100ms | **~3K** |
-
-### The numbers
-
-```
-Query                                      Naive Trad       Smart Trad       pgvector
-                                            time/tokens      time/tokens      time/tokens
-────────────────────────────────────────────────────────────────────────────────────────────
-how does authentication work                19ms/302Ktok     17ms/213Ktok      92ms/3Ktok
-send an email via gmail                     16ms/308Ktok     19ms/213Ktok     122ms/4Ktok
-calendar event creation                     16ms/277Ktok     16ms/190Ktok      87ms/4Ktok
-telegram bot message handler                15ms/285Ktok     18ms/210Ktok      95ms/3Ktok
-error handling and retries                  15ms/304Ktok     17ms/200Ktok      91ms/1Ktok
-how is the agent run loop structured        16ms/308Ktok     20ms/211Ktok     133ms/3Ktok
-memory and context management               15ms/305Ktok     17ms/200Ktok      88ms/4Ktok
-Google Workspace OAuth flow                16ms/303Ktok     17ms/36Ktok        89ms/2Ktok
-```
-
-### Takeaway
-
-- **97× less context** than naive grep-all, **60× less** than smart top-5 file reading.
-- Trade-off: ~100ms per query (embedding + vector search) vs ~17ms for local file reads.
-- That 100ms buys you **semantically ranked, relevant chunks** instead of whole files full of noise.
-- At current LLM pricing, 296K wasted tokens per query is the real cost — not the 80ms latency difference.
 
 ---
 
