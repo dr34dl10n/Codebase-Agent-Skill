@@ -1,8 +1,29 @@
-"""Configuration for codebase-skill."""
+"""Configuration for codebase-skill.
+
+Embedding model selection:
+  Set CODEINDEX_EMBED_MODEL to choose your model. If unset, defaults to
+  modernbert-embed-base. Run `python scripts/detect_model.py` to auto-detect
+  the best model for your hardware (writes the result to .env).
+
+  Supported models (sentence-transformers backend):
+    modernbert-embed-base   – 768-dim, 8192 context (fast on CPU)
+    modernbert-embed-large  – 1024-dim, 8192 context (better quality)
+
+  Supported models (Ollama backend):
+    nomic-embed-text        – 768-dim, ~8k context (best with GPU ≥8 GB)
+
+  Backend selection:
+    Set CODEINDEX_EMBED_BACKEND to "sentence_transformers" (default) or "ollama".
+    ModernBERT models require the sentence_transformers backend.
+    nomic-embed-text requires the ollama backend.
+"""
 
 import os
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def _load_env_file(path: Path) -> None:
@@ -55,12 +76,56 @@ class DBConfig:
         return f"postgresql://{self.user}:***@{self.host}:{self.port}/{self.database}"
 
 
+# Model dimension lookup – keeps dim in sync with the chosen model.
+_MODEL_DIMS = {
+    "nomic-embed-text":       768,
+    "modernbert-embed-base":  768,
+    "modernbert-embed-large": 1024,
+}
+
+# Maximum context length per model (in characters, rough ≈ 4 chars/token).
+_MODEL_MAX_TEXT = {
+    "nomic-embed-text":       32000,   # ~8k tokens
+    "modernbert-embed-base":  32768,   # 8192 tokens
+    "modernbert-embed-large": 32768,    # 8192 tokens
+}
+
+# HuggingFace model IDs for sentence-transformers backend.
+_HF_MODEL_IDS = {
+    "modernbert-embed-base":  "nomic-ai/modernbert-embed-base",
+    "modernbert-embed-large": "lightonai/modernbert-embed-large",
+}
+
+# Backend selection per model (auto-detected if not set).
+_MODEL_BACKEND = {
+    "nomic-embed-text":       "ollama",
+    "modernbert-embed-base":  "sentence_transformers",
+    "modernbert-embed-large": "sentence_transformers",
+}
+
+
 @dataclass
 class EmbedConfig:
-    model: str = os.getenv("CODEINDEX_EMBED_MODEL", "nomic-embed-text")
+    model: str = os.getenv("CODEINDEX_EMBED_MODEL", "modernbert-embed-base")
+    backend: str = os.getenv("CODEINDEX_EMBED_BACKEND", "")
     api_base: str = os.getenv("CODEINDEX_EMBED_API_BASE", "http://localhost:11434")
-    dim: int = 768  # nomic-embed-text dimension
+    dim: int = 0  # 0 means "auto-detect from model name"
     batch_size: int = 16
+    max_text_len: int = 0  # 0 means "auto-detect from model name"
+
+    def __post_init__(self):
+        # Auto-detect backend from model name if not set
+        if not self.backend:
+            self.backend = _MODEL_BACKEND.get(self.model, "ollama")
+        # Resolve dim from model name if not explicitly set
+        if self.dim == 0:
+            self.dim = _MODEL_DIMS.get(self.model, 768)
+        # Resolve max_text_len from model name if not explicitly set
+        if self.max_text_len == 0:
+            self.max_text_len = _MODEL_MAX_TEXT.get(self.model, 32000)
+        self.model = self.model  # ensure it's stored
+        logger.info("EmbedConfig: model=%s backend=%s dim=%d max_text_len=%d",
+                    self.model, self.backend, self.dim, self.max_text_len)
 
 
 @dataclass

@@ -34,7 +34,7 @@ Query → Embed service → cosine similarity search → ranked chunks
 
 Components:
 - `parser.py` — Tree-sitter based chunking (by function/class, not naive splitting)
-- `embedder.py` — Ollama-compatible embedding API (768-dim vectors, swap model/provider freely)
+- `embedder.py` — Embedding providers (sentence-transformers: ModernBERT, or Ollama: nomic)
 - `indexer.py` — Repository walker + incremental reindexing + orphan purge
 - `search.py` — Cosine similarity search with filters
 - `api.py` — FastAPI server (HTTP endpoints + MCP tool definitions)
@@ -161,7 +161,8 @@ Environment variables (or defaults in `config.py`):
 | `CODEINDEX_DB_NAME` | codeindex | Database name |
 | `CODEINDEX_DB_USER` | codeindex | DB user |
 | `CODEINDEX_DB_PASSWORD` | (required) | DB password |
-| `CODEINDEX_EMBED_MODEL` | nomic-embed-text | Embedding model name |
+| `CODEINDEX_EMBED_MODEL` | modernbert-embed-base | Embedding model (run `python scripts/detect_model.py --write-env` to auto-detect) |
+| `CODEINDEX_EMBED_BACKEND` | auto | `sentence_transformers` or `ollama` (auto from model) |
 | `CODEINDEX_EMBED_API_BASE` | http://localhost:11434 | Embedding API base URL (Ollama-compatible) |
 | `CODEINDEX_API_HOST` | 127.0.0.1 | API server host |
 | `CODEINDEX_API_PORT` | 8900 | API server port |
@@ -176,7 +177,7 @@ Python, JavaScript, TypeScript, TSX, JSX, Go, Rust, Java, C, C++, C#, Ruby, PHP,
 
 2. **tree-sitter version mismatch.** Use `tree-sitter<0.22` with `tree-sitter-languages>=1.10`. Newer tree-sitter has incompatible API.
 
-3. **Embedding service not running or model missing.** If using Ollama: verify `ollama list | grep nomic-embed-text`. Pull if needed: `ollama pull nomic-embed-text`.
+3. **Embedding model not available.** ModernBERT models auto-download from HuggingFace (sentence-transformers backend). If using Ollama backend: `ollama pull nomic-embed-text`.
 
 4. **Large repos take time to embed.** First index of a 10k-file repo may take 10-30 min. Incremental reindex is fast (only changed files).
 
@@ -198,7 +199,7 @@ Python, JavaScript, TypeScript, TSX, JSX, Go, Rust, Java, C, C++, C#, Ruby, PHP,
 
 - [ ] pgvector extension installed: `SELECT * FROM pg_extension WHERE extname = 'vector';`
 - [ ] Embedding service running: `curl $CODEINDEX_EMBED_API_BASE/api/tags`
-- [ ] Embedding model available (if Ollama): `ollama list | grep nomic`
+- [ ] Embedding model configured: `python scripts/detect_model.py` (ModernBERT auto-downloads, Ollama needs `ollama pull`)
 - [ ] Index works: `.venv/bin/python3 cli.py index /some/repo`
 - [ ] Search returns results: `.venv/bin/python3 cli.py search "test"`
 - [ ] MCP tools appear in agent: check tool list

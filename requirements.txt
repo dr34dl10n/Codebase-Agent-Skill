@@ -5,8 +5,9 @@ psycopg[binary]==3.3.4
 pgvector==0.4.2
 numpy==2.4.6
 
-# Embeddings (HTTP client — Ollama-compatible API)
-httpx==0.28.1
+# Embeddings
+httpx==0.28.1                    # HTTP client — Ollama-compatible API
+sentence-transformers>=3.0       # Direct Python — ModernBERT & HuggingFace models
 
 # MCP server
 mcp==1.27.1

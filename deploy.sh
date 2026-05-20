@@ -9,7 +9,9 @@
 # Prerequisites:
 #   - PostgreSQL 15+ running (sudo access for postgres user)
 #   - Python 3.11+
-#   - Ollama (or compatible service) running with an embedding model
+#
+# ModernBERT (default) auto-downloads from HuggingFace — no extra service needed.
+# Optional: Ollama for nomic-embed-text backend.
 #
 # After running this script, configure your agent's MCP server entry.
 # See README.md for details.
@@ -68,17 +70,34 @@ PGPASSWORD="$DB_PASSWORD" psql -h localhost -U "$DB_USER" -d "$DB_NAME" -c "
 
 # Embedding service (Ollama or compatible)
 EMBED_API_BASE=${CODEINDEX_EMBED_API_BASE:-http://localhost:11434}
-if curl -s "$EMBED_API_BASE/api/tags" | grep -q nomic-embed-text 2>/dev/null; then
-    echo "    Embedding service (nomic-embed-text): OK"
+EMBED_MODEL=${CODEINDEX_EMBED_MODEL:-}
+
+# Auto-detect embedding model based on hardware
+if [ -z "$EMBED_MODEL" ]; then
+    EMBED_MODEL=$("$VENV_DIR/bin/python3" "$SCRIPT_DIR/scripts/detect_model.py" 2>/dev/null | head -1 | sed 's/Recommended model: //')
+    if [ -z "$EMBED_MODEL" ]; then
+        EMBED_MODEL="modernbert-embed-base"  # sensible fallback (no Ollama needed)
+    fi
+fi
+echo "    Embedding model: $EMBED_MODEL"
+echo "    Run 'python scripts/detect_model.py --write-env' to persist this choice."
+
+# For ModernBERT (sentence-transformers), no service check needed — model auto-downloads.
+if [[ "$EMBED_MODEL" == nomic* ]]; then
+    if curl -s "$EMBED_API_BASE/api/tags" | grep -q "$EMBED_MODEL" 2>/dev/null; then
+        echo "    Embedding service ($EMBED_MODEL): OK"
+    else
+        echo "    WARNING: Embedding model '$EMBED_MODEL' not found at $EMBED_API_BASE. If using Ollama: ollama pull $EMBED_MODEL"
+    fi
 else
-    echo "    WARNING: Embedding model not found at $EMBED_API_BASE. If using Ollama: ollama pull nomic-embed-text"
+    echo "    Embedding model ($EMBED_MODEL): auto-downloads from HuggingFace (sentence-transformers)"
 fi
 
 # Python imports
 "$VENV_DIR/bin/python3" -c "
-import tree_sitter_languages; import psycopg; import pgvector; import mcp;
+import tree_sitter_languages; import psycopg; import pgvector; import mcp; import sentence_transformers;
 print('    Python deps: OK')
-" 2>/dev/null || echo "    Python deps: FAILED"
+" 2>/dev/null || echo '    Python deps: FAILED'
 
 # MCP server smoke test
 "$VENV_DIR/bin/python3" -c "

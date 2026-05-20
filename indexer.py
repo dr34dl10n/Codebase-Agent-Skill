@@ -16,7 +16,7 @@ import psycopg
 from pgvector.psycopg import register_vector
 
 from config import AppConfig
-from embedder import EmbeddingProvider
+from embedder import create_provider, EmbeddingProvider
 from parser import parse_file, walk_repository, CodeChunk
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ class CodeIndexer:
     def __init__(self, config: Optional[AppConfig] = None):
         self.config = config or AppConfig()
         self._conn = None
-        self._embedder = EmbeddingProvider(self.config.embed)
+        self._embedder = create_provider(self.config.embed)
 
     def _get_conn(self) -> psycopg.Connection:
         """Get or create a database connection."""

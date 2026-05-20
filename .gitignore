@@ -8,6 +8,12 @@ dist/
 build/
 *.log
 
+# Benchmark data (regenerate with: python benchmark.py)
+benchmark_results.json
+
+# HuggingFace model cache (auto-downloaded by sentence-transformers)
+.cache/
+
 # Dev / internal notes (not for public repo)
 PROGRESSION.md
 info-db.txt
