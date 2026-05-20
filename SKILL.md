@@ -1,0 +1,192 @@
+---
+name: codebase-skill
+description: "Use when indexing or semantically searching a codebase. Tree-sitter parsing, pgvector storage, Ollama embeddings for RAG."
+version: 1.1.0
+author: Hermes Agent
+license: MIT
+metadata:
+  hermes:
+    tags: [codebase, indexing, semantic-search, pgvector, tree-sitter, rag]
+    related_skills: [writing-plans, github-pr-workflow]
+---
+
+# Codebase Skill — Semantic Code Indexing & Search
+
+## Overview
+
+Turn any code repository into a searchable knowledge base using Tree-sitter parsing, Ollama embeddings (nomic-embed-text), and pgvector. Instead of loading entire files into context, search surgically for the chunks you need.
+
+## When to Use
+
+- Agent needs to understand a large codebase without reading every file
+- User asks "where is X implemented?" or "how does Y work?"
+- Need to find all functions/classes related to a concept
+- Preparing context for code review or modification
+- Don't use for: tiny repos (<10 files), non-code files only, or when full file reads are sufficient
+
+## Architecture
+
+```
+Repository → Tree-sitter parser → Semantic chunks → Ollama embed → pgvector
+                                                                    ↓
+Query → Ollama embed → cosine similarity search → ranked chunks
+```
+
+Components:
+- `parser.py` — Tree-sitter based chunking (by function/class, not naive splitting)
+- `embedder.py` — Ollama nomic-embed-text (768-dim vectors)
+- `indexer.py` — Repository walker + incremental reindexing
+- `search.py` — Cosine similarity search with filters
+- `api.py` — FastAPI server (HTTP endpoints + MCP tool definitions)
+- `cli.py` — CLI interface for terminal use
+- `mcp_server.py` — MCP stdio server exposing 3 tools
+
+## Deploy on Another Agent
+
+### Full Deploy (one command)
+
+```bash
+bash deploy.sh <db_password>
+```
+
+Creates: PostgreSQL DB + user, pgvector extension, tables, Python venv + deps.
+
+### MCP Configuration
+
+**Hermes Agent** — add to `~/.hermes/config.yaml`:
+
+```yaml
+mcp_servers:
+  codebase-skill:
+    command: /data/codebase-skill/.venv/bin/python3
+    args: ["/data/codebase-skill/mcp_server.py"]
+    env:
+      CODEINDEX_DB_PASSWORD: "${CODEINDEX_DB_PASSWORD}"
+```
+
+**Claude Code / Cursor / other MCP clients** — add to MCP settings JSON:
+
+```json
+{
+  "mcpServers": {
+    "codebase-skill": {
+      "command": "/path/to/codebase-skill/.venv/bin/python3",
+      "args": ["/path/to/codebase-skill/mcp_server.py"],
+      "env": { "CODEINDEX_DB_PASSWORD": "your_password" }
+    }
+  }
+}
+```
+
+**Pi Agent / Codex** — same MCP stdio protocol. Adjust `command` path to the venv python on that host.
+
+### Environment Variables
+
+Required: `CODEINDEX_DB_PASSWORD`. All others have defaults (see `.env.example`).
+
+The MCP server auto-loads `~/.hermes/.env` on startup. When using Hermes, you STILL need the `env` block in the MCP config because Hermes filters subprocess env vars.
+
+### Index First Repo
+
+```bash
+.venv/bin/python3 cli.py index /path/to/repo
+```
+
+## Quick Start
+
+### 1. Initialize Database (requires superuser once)
+
+```bash
+sudo -u postgres psql -d codeindex -f /data/codebase-skill/init_db.sql
+```
+
+### 2. Index a Repository
+
+```bash
+# CLI
+cd /data/codebase-skill && .venv/bin/python3 cli.py index /path/to/repo
+
+# API
+curl -X POST http://localhost:8900/index \
+  -H "Content-Type: application/json" \
+  -d '{"repo_path": "/path/to/repo"}'
+```
+
+### 3. Search
+
+```bash
+# CLI
+cd /data/codebase-skill && .venv/bin/python3 cli.py search "authentication middleware"
+
+# Or use the bin/ shortcuts
+./bin/cbsearch "authentication middleware"
+./bin/cbcontext /path/to/file.py --focus "tool registration"
+./bin/cbstats
+```
+
+## MCP Tools
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `search` | query, top_k, language, file_pattern, repo_path, min_score | Semantic search across indexed codebases |
+| `file_context` | file_path, focus, top_k | File's chunks + related chunks |
+| `stats` | repo_path? | Indexing statistics |
+
+## Search Filters
+
+- `language` — Filter by programming language (python, javascript, etc.)
+- `file_pattern` — SQL LIKE pattern (e.g. `%/auth%`)
+- `repo_path` — Restrict to one repository
+- `min_score` — Minimum cosine similarity (0-1, default 0.3)
+
+## Configuration
+
+Environment variables (or defaults in `config.py`):
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `CODEINDEX_DB_HOST` | localhost | PostgreSQL host |
+| `CODEINDEX_DB_PORT` | 5432 | PostgreSQL port |
+| `CODEINDEX_DB_NAME` | codeindex | Database name |
+| `CODEINDEX_DB_USER` | codeindex | DB user |
+| `CODEINDEX_DB_PASSWORD` | (required) | DB password |
+| `CODEINDEX_EMBED_MODEL` | nomic-embed-text | Ollama embedding model |
+| `CODEINDEX_OLLAMA_BASE` | http://localhost:11434 | Ollama API base |
+| `CODEINDEX_API_HOST` | 127.0.0.1 | API server host |
+| `CODEINDEX_API_PORT` | 8900 | API server port |
+
+## Supported Languages (25)
+
+Python, JavaScript, TypeScript, TSX, JSX, Go, Rust, Java, C, C++, C#, Ruby, PHP, Swift, Kotlin, Scala, Lua, R, Bash, SQL, HTML, CSS, JSON, YAML, TOML, Markdown.
+
+## Common Pitfalls
+
+1. **pgvector extension missing.** Must be created by a superuser: `CREATE EXTENSION IF NOT EXISTS vector;`. The `deploy.sh` script does this but requires sudo.
+
+2. **tree-sitter version mismatch.** Use `tree-sitter<0.22` with `tree-sitter-languages>=1.10`. Newer tree-sitter has incompatible API.
+
+3. **Ollama not running or model missing.** Verify: `ollama list | grep nomic-embed-text`. Pull if needed: `ollama pull nomic-embed-text`.
+
+4. **Large repos take time to embed.** First index of a 10k-file repo may take 10-30 min. Incremental reindex is fast (only changed files).
+
+5. **Zero vectors on embedding failure.** If Ollama is down, embeddings become zero vectors. Search still works but returns random results. Check logs.
+
+6. **Module-level chunks may capture decorator lines.** For Python, `@dataclass` decorators before classes appear in both module and definition chunks if overlap detection fails.
+
+7. **File path in chunks is absolute.** Searching with relative paths won't match. Always use absolute paths or LIKE patterns.
+
+8. **Hermes MCP env filtering.** Hermes filters subprocess env vars. You MUST include the `env` block in the mcp_servers config to pass `CODEINDEX_DB_PASSWORD` through, even though `mcp_server.py` auto-loads `~/.hermes/.env`.
+
+9. **Ollama 500 intermittents.** On `/api/embeddings`, Ollama can return 500 sporadically. The embedder retries 3x with exponential backoff. Expect slower indexing on large repos.
+
+10. **tree-sitter FutureWarning.** tree-sitter 0.21.x emits FutureWarning (no impact, compatibility with tree-sitter-languages).
+
+## Verification Checklist
+
+- [ ] pgvector extension installed: `SELECT * FROM pg_extension WHERE extname = 'vector';`
+- [ ] Ollama running: `curl http://localhost:11434/api/tags`
+- [ ] nomic-embed-text model available: `ollama list | grep nomic`
+- [ ] Index works: `.venv/bin/python3 cli.py index /some/repo`
+- [ ] Search returns results: `.venv/bin/python3 cli.py search "test"`
+- [ ] MCP tools appear in agent: check tool list
+- [ ] API healthy (if using): `curl http://localhost:8900/health`

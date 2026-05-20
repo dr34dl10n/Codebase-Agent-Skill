@@ -1,0 +1,19 @@
+# Core
+tree-sitter==0.21.3
+tree-sitter-languages==1.10.2
+psycopg[binary]==3.3.4
+pgvector==0.4.2
+numpy==2.4.6
+
+# Embeddings (Ollama HTTP client)
+httpx==0.28.1
+
+# MCP server
+mcp==1.27.1
+
+# API server (optional — only if running api.py / cli.py serve)
+fastapi==0.136.1
+uvicorn==0.47.0
+
+# CLI / utilities
+python-dotenv==1.2.2

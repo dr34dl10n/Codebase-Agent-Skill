@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""Semantic code search across indexed codebases.
+
+Usage:
+  cbsearch "authentication middleware"
+  cbsearch "database connection" --top-k 5 --language python
+  cbsearch "auth" --repo-path /data/AIssistant --min-score 0.4
+"""
+import argparse
+import json
+import sys
+import os
+
+# Auto-load env
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pathlib import Path
+
+def _load_env(path: Path):
+    if not path.is_file():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+            value = value[1:-1]
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+_load_env(Path.home() / ".hermes" / ".env")
+
+from config import AppConfig
+from search import CodeSearcher
+
+
+def main():
+    p = argparse.ArgumentParser(description="Semantic code search")
+    p.add_argument("query", help="Natural language or code query")
+    p.add_argument("--top-k", type=int, default=10, help="Max results (default: 10)")
+    p.add_argument("--language", help="Filter by language (python, javascript...)")
+    p.add_argument("--file-pattern", help="SQL LIKE pattern for file path (e.g. '%%/auth%%')")
+    p.add_argument("--repo-path", help="Restrict to repository path")
+    p.add_argument("--min-score", type=float, default=0.3, help="Min cosine similarity 0-1 (default: 0.3)")
+    p.add_argument("--json", action="store_true", help="Output as JSON")
+    args = p.parse_args()
+
+    config = AppConfig()
+    with CodeSearcher(config) as searcher:
+        results = searcher.semantic_search(
+            query=args.query,
+            top_k=args.top_k,
+            language=args.language,
+            file_pattern=args.file_pattern,
+            repo_path=args.repo_path,
+            min_score=args.min_score,
+        )
+
+    if not results:
+        print("No results found." if not args.json else "[]")
+        return
+
+    if args.json:
+        print(json.dumps([{
+            "symbol": r.symbol,
+            "language": r.language,
+            "score": round(r.score, 4),
+            "file_path": r.file_path,
+            "start_line": r.start_line,
+            "end_line": r.end_line,
+            "content": r.content,
+        } for r in results], indent=2))
+        return
+
+    for r in results:
+        print(f"{'='*60}")
+        print(f"  {r.symbol}  [{r.language}]  score={r.score:.3f}")
+        print(f"  {r.file_path}:{r.start_line}-{r.end_line}")
+        print(f"{'='*60}")
+        lines = r.content.split("\n")
+        for cl in lines[:25]:
+            print(f"  {cl}")
+        if len(lines) > 25:
+            print(f"  ... ({len(lines) - 25} more lines)")
+        print()
+
+
+if __name__ == "__main__":
+    main()
