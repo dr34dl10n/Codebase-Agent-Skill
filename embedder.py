@@ -1,6 +1,7 @@
-"""Embedding provider using Ollama nomic-embed-text.
+"""Embedding provider — Ollama-compatible API (works with any local or cloud endpoint).
 
 Batch-aware: embeds multiple texts per API call for efficiency.
+Swap models/providers by changing CODEINDEX_EMBED_MODEL and CODEINDEX_EMBED_API_BASE.
 """
 
 import json
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class EmbeddingProvider:
-    """Generate embeddings via Ollama API."""
+    """Generate embeddings via Ollama-compatible /api/embeddings endpoint."""
 
     def __init__(self, config: Optional[EmbedConfig] = None):
         self.config = config or EmbedConfig()
@@ -45,7 +46,7 @@ class EmbeddingProvider:
         return result[0] if result else []
 
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
-        """Embed a single batch via Ollama /api/embeddings."""
+        """Embed a single batch via /api/embeddings endpoint."""
         import time
         embeddings = []
         for text in texts:
@@ -68,7 +69,7 @@ class EmbeddingProvider:
                         embeddings.append([0.0] * self.config.dim)
                     break  # success
                 except (httpx.HTTPStatusError, httpx.TimeoutException, httpx.HTTPError, json.JSONDecodeError) as e:
-                    # On 500, Ollama might be overloaded — wait longer before retry
+                    # On 500, the embedding service might be overloaded — wait longer before retry
                     time.sleep(0.5)
                     if attempt < 2:
                         wait = 2 ** (attempt + 1)

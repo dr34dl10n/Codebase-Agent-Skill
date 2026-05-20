@@ -1,9 +1,0 @@
-Database credentials are in ~/.hermes/.env (CODEINDEX_DB_* variables).
-The MCP server and CLI both auto-load from there.
-
-One-time DB setup (run as postgres superuser):
-  sudo -u postgres psql -d codeindex -c 'CREATE EXTENSION IF NOT EXISTS vector;'
-  CODEINDEX_DB_PASSWORD=<pass> bash setup_db.sh
-
-For full deployment, use deploy.sh instead:
-  bash deploy.sh <db_password>

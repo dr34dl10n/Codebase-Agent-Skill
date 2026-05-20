@@ -7,3 +7,7 @@ venv/
 dist/
 build/
 *.log
+
+# Dev / internal notes (not for public repo)
+PROGRESSION.md
+info-db.txt

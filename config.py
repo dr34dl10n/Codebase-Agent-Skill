@@ -58,7 +58,7 @@ class DBConfig:
 @dataclass
 class EmbedConfig:
     model: str = os.getenv("CODEINDEX_EMBED_MODEL", "nomic-embed-text")
-    api_base: str = os.getenv("CODEINDEX_OLLAMA_BASE", "http://localhost:11434")
+    api_base: str = os.getenv("CODEINDEX_EMBED_API_BASE", "http://localhost:11434")
     dim: int = 768  # nomic-embed-text dimension
     batch_size: int = 16
 

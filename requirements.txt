@@ -5,7 +5,7 @@ psycopg[binary]==3.3.4
 pgvector==0.4.2
 numpy==2.4.6
 
-# Embeddings (Ollama HTTP client)
+# Embeddings (HTTP client — Ollama-compatible API)
 httpx==0.28.1
 
 # MCP server

@@ -1,6 +1,6 @@
 ---
 name: codebase-skill
-description: "Use when indexing or semantically searching a codebase. Tree-sitter parsing, pgvector storage, Ollama embeddings for RAG."
+description: "Use when indexing or semantically searching a codebase. Tree-sitter parsing, pgvector storage, embedding service for RAG."
 version: 1.2.0
 author: Hermes Agent
 license: MIT
@@ -14,7 +14,7 @@ metadata:
 
 ## Overview
 
-Turn any code repository into a searchable knowledge base using Tree-sitter parsing, Ollama embeddings (nomic-embed-text), and pgvector. Instead of loading entire files into context, search surgically for the chunks you need.
+Turn any code repository into a searchable knowledge base using Tree-sitter parsing, embedding vectors (Ollama-compatible API), and pgvector. Instead of loading entire files into context, search surgically for the chunks you need.
 
 ## When to Use
 
@@ -27,14 +27,14 @@ Turn any code repository into a searchable knowledge base using Tree-sitter pars
 ## Architecture
 
 ```
-Repository → Tree-sitter parser → Semantic chunks → Ollama embed → pgvector
+Repository → Tree-sitter parser → Semantic chunks → Embed service → pgvector
                                                                     ↓
-Query → Ollama embed → cosine similarity search → ranked chunks
+Query → Embed service → cosine similarity search → ranked chunks
 ```
 
 Components:
 - `parser.py` — Tree-sitter based chunking (by function/class, not naive splitting)
-- `embedder.py` — Ollama nomic-embed-text (768-dim vectors)
+- `embedder.py` — Ollama-compatible embedding API (768-dim vectors, swap model/provider freely)
 - `indexer.py` — Repository walker + incremental reindexing + orphan purge
 - `search.py` — Cosine similarity search with filters
 - `api.py` — FastAPI server (HTTP endpoints + MCP tool definitions)
@@ -161,8 +161,8 @@ Environment variables (or defaults in `config.py`):
 | `CODEINDEX_DB_NAME` | codeindex | Database name |
 | `CODEINDEX_DB_USER` | codeindex | DB user |
 | `CODEINDEX_DB_PASSWORD` | (required) | DB password |
-| `CODEINDEX_EMBED_MODEL` | nomic-embed-text | Ollama embedding model |
-| `CODEINDEX_OLLAMA_BASE` | http://localhost:11434 | Ollama API base |
+| `CODEINDEX_EMBED_MODEL` | nomic-embed-text | Embedding model name |
+| `CODEINDEX_EMBED_API_BASE` | http://localhost:11434 | Embedding API base URL (Ollama-compatible) |
 | `CODEINDEX_API_HOST` | 127.0.0.1 | API server host |
 | `CODEINDEX_API_PORT` | 8900 | API server port |
 
@@ -176,11 +176,11 @@ Python, JavaScript, TypeScript, TSX, JSX, Go, Rust, Java, C, C++, C#, Ruby, PHP,
 
 2. **tree-sitter version mismatch.** Use `tree-sitter<0.22` with `tree-sitter-languages>=1.10`. Newer tree-sitter has incompatible API.
 
-3. **Ollama not running or model missing.** Verify: `ollama list | grep nomic-embed-text`. Pull if needed: `ollama pull nomic-embed-text`.
+3. **Embedding service not running or model missing.** If using Ollama: verify `ollama list | grep nomic-embed-text`. Pull if needed: `ollama pull nomic-embed-text`.
 
 4. **Large repos take time to embed.** First index of a 10k-file repo may take 10-30 min. Incremental reindex is fast (only changed files).
 
-5. **Zero vectors on embedding failure.** If Ollama is down, embeddings become zero vectors. Search still works but returns random results. Check logs.
+5. **Zero vectors on embedding failure.** If the embedding service is down, embeddings become zero vectors. Search still works but returns random results. Check logs.
 
 6. **Module-level chunks may capture decorator lines.** For Python, `@dataclass` decorators before classes appear in both module and definition chunks if overlap detection fails.
 
@@ -188,7 +188,7 @@ Python, JavaScript, TypeScript, TSX, JSX, Go, Rust, Java, C, C++, C#, Ruby, PHP,
 
 8. **Hermes MCP env filtering.** Hermes filters subprocess env vars. You MUST include the `env` block in the mcp_servers config to pass `CODEINDEX_DB_PASSWORD` through, even though `mcp_server.py` auto-loads `~/.hermes/.env`.
 
-9. **Ollama 500 intermittents.** On `/api/embeddings`, Ollama can return 500 sporadically. The embedder retries 3x with exponential backoff. Expect slower indexing on large repos. Never run two index operations simultaneously.
+9. **Embedding service 500 intermittents.** The `/api/embeddings` endpoint can return 500 sporadically (common with Ollama). The embedder retries 3x with exponential backoff. Expect slower indexing on large repos. Never run two index operations simultaneously.
 
 10. **tree-sitter FutureWarning.** tree-sitter 0.21.x emits FutureWarning (no impact, compatibility with tree-sitter-languages).
 
@@ -197,8 +197,8 @@ Python, JavaScript, TypeScript, TSX, JSX, Go, Rust, Java, C, C++, C#, Ruby, PHP,
 ## Verification Checklist
 
 - [ ] pgvector extension installed: `SELECT * FROM pg_extension WHERE extname = 'vector';`
-- [ ] Ollama running: `curl http://localhost:11434/api/tags`
-- [ ] nomic-embed-text model available: `ollama list | grep nomic`
+- [ ] Embedding service running: `curl $CODEINDEX_EMBED_API_BASE/api/tags`
+- [ ] Embedding model available (if Ollama): `ollama list | grep nomic`
 - [ ] Index works: `.venv/bin/python3 cli.py index /some/repo`
 - [ ] Search returns results: `.venv/bin/python3 cli.py search "test"`
 - [ ] MCP tools appear in agent: check tool list

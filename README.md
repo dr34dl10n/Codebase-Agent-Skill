@@ -9,7 +9,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org)
 [![Tree-sitter](https://img.shields.io/badge/tree--sitter-0.21-green.svg)](https://tree-sitter.github.io)
 [![pgvector](https://img.shields.io/badge/pgvector-0.6-orange.svg)](https://github.com/pgvector/pgvector)
-[![Ollama](https://img.shields.io/badge/ollama-nomic--embed--text-purple.svg)](https://ollama.com)
+[![Embeddings](https://img.shields.io/badge/embeddings-Ollama%20compatible-blueviolet.svg)](https://ollama.com)
 [![MCP](https://img.shields.io/badge/MCP-stdio-black.svg)](https://modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey.svg)](LICENSE)
 
@@ -32,7 +32,7 @@ This isn't a search engine for humans. It's a **RAG backbone for AI agents** —
 
 ```
   ┌─────────────┐     ┌──────────────┐     ┌────────────────┐     ┌──────────┐
-  │  Repository  │────▶│  Tree-sitter │────▶│  Ollama embed  │────▶│  pgvector │
+  │  Repository  │────▶│  Tree-sitter │────▶│  Embed service │────▶│  pgvector │
   │  (any lang)  │     │  chunking    │     │  nomic (768d)  │     │  storage  │
   └─────────────┘     └──────────────┘     └────────────────┘     └──────────┘
                                                                     │
@@ -54,7 +54,7 @@ This isn't a search engine for humans. It's a **RAG backbone for AI agents** —
 | Layer | Tech | Why |
 |-------|------|-----|
 | **Parsing** | [Tree-sitter](https://tree-sitter.github.io) + tree-sitter-languages | AST-aware chunking by function/class, not line splits. 25 languages. |
-| **Embeddings** | [Ollama](https://ollama.com) + nomic-embed-text | Fully local, 768-dim, good code understanding. No data leaves your machine. |
+| **Embeddings** | [Ollama](https://ollama.com) / compatible API | Local-first, swap model/provider freely. Supports any Ollama-compatible endpoint (LM Studio, vLLM, cloud). |
 | **Storage** | [PostgreSQL](https://postgresql.org) + [pgvector](https://github.com/pgvector/pgvector) | HNSW index for sub-ms cosine search. ACID, proven, no new infra. |
 | **Agent Interface** | [MCP](https://modelcontextprotocol.io) (stdio) | Standard protocol — works with Hermes, Claude Code, Cursor, Pi, Codex, any MCP client. |
 | **API** | [FastAPI](https://fastapi.tiangolo.com) | Optional HTTP endpoints. Same logic, REST access. |
@@ -127,7 +127,7 @@ Don't see yours? Tree-sitter supports [many more](https://tree-sitter.github.io/
 
 - PostgreSQL 15+ (with sudo to create extensions)
 - Python 3.11+
-- Ollama running (`ollama serve`) with nomic-embed-text (`ollama pull nomic-embed-text`)
+- An embedding service running (e.g. Ollama: `ollama serve` + `ollama pull nomic-embed-text`)
 
 ### Deploy
 
@@ -190,8 +190,8 @@ mcp_servers:
 | `CODEINDEX_DB_NAME` | codeindex | Database name |
 | `CODEINDEX_DB_USER` | codeindex | DB user |
 | `CODEINDEX_DB_PASSWORD` | **(required)** | DB password |
-| `CODEINDEX_EMBED_MODEL` | nomic-embed-text | Ollama embedding model |
-| `CODEINDEX_OLLAMA_BASE` | http://localhost:11434 | Ollama API base |
+| `CODEINDEX_EMBED_MODEL` | nomic-embed-text | Embedding model name |
+| `CODEINDEX_EMBED_API_BASE` | http://localhost:11434 | Embedding API base URL (Ollama-compatible) |
 | `CODEINDEX_API_HOST` | 127.0.0.1 | API server host |
 | `CODEINDEX_API_PORT` | 8900 | API server port |
 
@@ -219,7 +219,7 @@ codebase-skill/
 ├── mcp_server.py      # MCP stdio server (3 tools)
 ├── config.py          # Env-based configuration
 ├── parser.py           # Tree-sitter chunking (25 languages)
-├── embedder.py         # Ollama embeddings + retry/backoff
+├── embedder.py         # Embeddings via Ollama-compatible API + retry/backoff
 ├── indexer.py          # Repository walker + incremental reindex
 ├── search.py           # Cosine similarity search + filters
 ├── api.py              # FastAPI HTTP server (optional)

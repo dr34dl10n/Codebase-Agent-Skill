@@ -9,7 +9,7 @@
 # Prerequisites:
 #   - PostgreSQL 15+ running (sudo access for postgres user)
 #   - Python 3.11+
-#   - Ollama running with nomic-embed-text model
+#   - Ollama (or compatible service) running with an embedding model
 #
 # After running this script, configure your agent's MCP server entry.
 # See README.md for details.
@@ -66,11 +66,12 @@ PGPASSWORD="$DB_PASSWORD" psql -h localhost -U "$DB_USER" -d "$DB_NAME" -c "
     SELECT extname, extversion FROM pg_extension WHERE extname = 'vector';
 " 2>/dev/null && echo "    pgvector: OK" || echo "    pgvector: FAILED"
 
-# Ollama
-if curl -s http://localhost:11434/api/tags | grep -q nomic-embed-text 2>/dev/null; then
-    echo "    Ollama nomic-embed-text: OK"
+# Embedding service (Ollama or compatible)
+EMBED_API_BASE=${CODEINDEX_EMBED_API_BASE:-http://localhost:11434}
+if curl -s "$EMBED_API_BASE/api/tags" | grep -q nomic-embed-text 2>/dev/null; then
+    echo "    Embedding service (nomic-embed-text): OK"
 else
-    echo "    WARNING: Ollama nomic-embed-text not found. Pull with: ollama pull nomic-embed-text"
+    echo "    WARNING: Embedding model not found at $EMBED_API_BASE. If using Ollama: ollama pull nomic-embed-text"
 fi
 
 # Python imports
