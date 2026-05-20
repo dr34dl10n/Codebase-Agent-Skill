@@ -7,6 +7,8 @@ Tools exposed:
   - search: Semantic search across indexed codebases
   - file_context: Get a file's chunks + related chunks
   - stats: Indexing statistics
+  - reindex: Refresh an indexed repository (detects changes + deleted files)
+  - list_projects: List all indexed repositories
 """
 
 import json
@@ -43,13 +45,18 @@ from mcp.types import (
 
 from config import AppConfig
 from search import CodeSearcher
+from indexer import CodeIndexer
 
 app = Server("codebase-skill")
 
-# Lazy searcher — created per call to avoid stale connections
+# Lazy factories — created per call to avoid stale connections
 def _search() -> CodeSearcher:
     config = AppConfig()
     return CodeSearcher(config)
+
+def _indexer() -> CodeIndexer:
+    config = AppConfig()
+    return CodeIndexer(config)
 
 
 @app.list_tools()
@@ -136,6 +143,38 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
+        Tool(
+            name="reindex",
+            description=(
+                "Refresh an indexed repository. Detects modified files (mtime-based), "
+                "re-parses and re-embeds them, and purges chunks for files that were "
+                "deleted from disk. Use force_reindex=true to re-index everything. "
+                "Call this after pulling code changes or when search results seem stale."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo_path": {
+                        "type": "string",
+                        "description": "Absolute path to the repository root.",
+                    },
+                    "force_reindex": {
+                        "type": "boolean",
+                        "description": "If true, re-index all files regardless of mtime (default: false).",
+                        "default": False,
+                    },
+                },
+                "required": ["repo_path"],
+            },
+        ),
+        Tool(
+            name="list_projects",
+            description="List all indexed repositories with their path, last indexed time, and chunk count.",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+            },
+        ),
     ]
 
 
@@ -190,6 +229,25 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             with _search() as searcher:
                 stats = searcher.get_stats(repo_path=arguments.get("repo_path"))
             return [TextContent(type="text", text=json.dumps(stats, indent=2))]
+
+        elif name == "reindex":
+            with _indexer() as indexer:
+                result = indexer.index_repository(
+                    repo_path=arguments["repo_path"],
+                    force_reindex=arguments.get("force_reindex", False),
+                )
+            return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+
+        elif name == "list_projects":
+            with _indexer() as indexer:
+                projects = indexer.list_projects()
+            if not projects:
+                return [TextContent(type="text", text="No indexed repositories.")]
+            lines = []
+            for p in projects:
+                lines.append(f"  {p['path']}")
+                lines.append(f"    chunks: {p['total_chunks']}  last_indexed: {p['last_indexed'] or 'never'}")
+            return [TextContent(type="text", text="\n".join(lines))]
 
         else:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]

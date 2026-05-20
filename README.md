@@ -62,13 +62,54 @@ This isn't a search engine for humans. It's a **RAG backbone for AI agents** —
 
 ---
 
-## 3 MCP Tools Your Agent Gets
+## 5 MCP Tools Your Agent Gets
 
 | Tool | What it does | When to use |
 |------|-------------|-------------|
 | `search` | Semantic search with filters (language, file pattern, repo) | "Where is auth implemented?" "Find all database connection code" |
 | `file_context` | A file's chunks + semantically related chunks from other files | Understanding a file and its dependencies without reading everything |
 | `stats` | Chunk count, file count, language count | "Is this repo indexed?" "How big is the codebase?" |
+| `reindex` | Refresh a repo: re-embed modified files + purge deleted file chunks | After pulling code changes, or when search seems stale |
+| `list_projects` | List all indexed repos with last_indexed time | "What repos are tracked?" |
+
+---
+
+## Keeping the Index Fresh
+
+Your codebase changes. The index needs to keep up.
+
+### Incremental Reindex
+
+Re-running `index` on an already-indexed repo only processes changes:
+
+| Change | Handling |
+|--------|----------|
+| Modified file (mtime > last_indexed) | Re-parsed, old chunks deleted, new chunks embedded & stored |
+| Deleted file | Chunks purged automatically (`orphan_chunks_purged` in stats) |
+| New file | Parsed, embedded & stored normally |
+| Unchanged file | Skipped (zero cost) |
+
+```bash
+# Incremental (fast — only changes)
+.venv/bin/python3 cli.py index /path/to/repo
+
+# Force full reindex
+.venv/bin/python3 cli.py index /path/to/repo --force
+```
+
+Or via MCP: `mcp_codebase_reindex(repo_path="/path/to/repo")`
+
+### Auto-Reindex Cron
+
+A cron job runs `auto_reindex.py` every 4 hours, keeping all registered repos fresh automatically. It only reports when changes are detected.
+
+```bash
+# Manual run
+.venv/bin/python3 auto_reindex.py
+
+# Force full reindex of everything
+.venv/bin/python3 auto_reindex.py --force
+```
 
 ---
 
@@ -186,6 +227,7 @@ codebase-skill/
 ├── init_db.sql         # Database schema
 ├── deploy.sh           # Full one-command deployment
 ├── setup_db.sh         # DB-only setup (legacy)
+├── auto_reindex.py     # Cron-friendly auto-reindex for all repos
 ├── requirements.txt    # Python dependencies
 ├── .env.example        # Environment variables template
 ├── SKILL.md            # Hermes Agent skill definition

@@ -64,31 +64,36 @@ class CodeIndexer:
         # Get or create project record
         proj = self._upsert_project(conn, str(repo), name)
         
-        # Find all parseable files
-        files = walk_repository(str(repo), self.config.parse)
-        logger.info(f"Found {len(files)} parseable files in {repo}")
+        # Find all parseable files on disk
+        files_on_disk = set(walk_repository(str(repo), self.config.parse))
+        logger.info(f"Found {len(files_on_disk)} parseable files in {repo}")
+
+        # Purge chunks for files that no longer exist on disk
+        deleted_orphans = self._purge_deleted_files(conn, str(repo), files_on_disk)
+        if deleted_orphans:
+            logger.info(f"Purged {deleted_orphans} orphan chunks (deleted files)")
 
         if not force_reindex:
             # Only index files modified since last index
             last_indexed = proj.get("last_indexed")
             if last_indexed:
-                files = self._filter_changed(files, last_indexed)
-                logger.info(f"{len(files)} files changed since last index")
+                files_on_disk = set(self._filter_changed(list(files_on_disk), last_indexed))
+                logger.info(f"{len(files_on_disk)} files changed since last index")
 
         # Parse all files into chunks
         all_chunks: list[CodeChunk] = []
-        for fpath in files:
+        for fpath in files_on_disk:
             try:
                 chunks = parse_file(fpath, self.config.parse)
                 all_chunks.extend(chunks)
             except Exception as e:
                 logger.warning(f"Parse error on {fpath}: {e}")
 
-        logger.info(f"Parsed {len(all_chunks)} chunks from {len(files)} files")
+        logger.info(f"Parsed {len(all_chunks)} chunks from {len(files_on_disk)} files")
 
         # Delete stale chunks for changed files (old chunks from these files)
-        if files:
-            self._delete_file_chunks(conn, [str(Path(f)) for f in files])
+        if files_on_disk:
+            self._delete_file_chunks(conn, [str(Path(f)) for f in files_on_disk])
 
         # Embed and store chunks in batches
         stored = self._embed_and_store(conn, all_chunks)
@@ -106,9 +111,10 @@ class CodeIndexer:
         elapsed = time.time() - start_time
         stats = {
             "project": name,
-            "files_processed": len(files),
+            "files_processed": len(files_on_disk),
             "chunks_parsed": len(all_chunks),
             "chunks_stored": stored,
+            "orphan_chunks_purged": deleted_orphans,
             "total_chunks": total,
             "elapsed_seconds": round(elapsed, 2),
         }
@@ -214,6 +220,45 @@ class CodeIndexer:
                 (repo_path + "/%",),
             )
             return cur.fetchone()[0]
+
+    def _purge_deleted_files(self, conn, repo_path: str, files_on_disk: set[str]) -> int:
+        """Purge chunks for files that no longer exist on disk.
+
+        Compares file paths in the DB for this repo against the actual
+        filesystem. Deletes chunks for any files that have been removed.
+
+        Returns:
+            Number of orphan chunks deleted.
+        """
+        # Get all distinct file paths in DB for this repo
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT DISTINCT file_path FROM code_chunks WHERE file_path LIKE %s",
+                (repo_path + "/%",),
+            )
+            db_files = {row[0] for row in cur.fetchall()}
+
+        # Find files in DB that don't exist on disk anymore
+        orphans = [f for f in db_files if f not in files_on_disk]
+        if not orphans:
+            return 0
+
+        self._delete_file_chunks(conn, orphans)
+        return len(orphans)
+
+    def list_projects(self) -> list[dict]:
+        """List all indexed projects with their metadata."""
+        conn = self._get_conn()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT path, last_indexed, total_chunks, metadata FROM projects ORDER BY last_indexed DESC NULLS LAST"
+            )
+            rows = cur.fetchall()
+        return [
+            {"path": r[0], "last_indexed": r[1].isoformat() if r[1] else None,
+             "total_chunks": r[2], "metadata": r[3]}
+            for r in rows
+        ]
 
     def remove_repository(self, repo_path: str) -> int:
         """Remove all indexed data for a repository."""

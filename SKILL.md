@@ -1,7 +1,7 @@
 ---
 name: codebase-skill
 description: "Use when indexing or semantically searching a codebase. Tree-sitter parsing, pgvector storage, Ollama embeddings for RAG."
-version: 1.1.0
+version: 1.2.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -35,11 +35,12 @@ Query → Ollama embed → cosine similarity search → ranked chunks
 Components:
 - `parser.py` — Tree-sitter based chunking (by function/class, not naive splitting)
 - `embedder.py` — Ollama nomic-embed-text (768-dim vectors)
-- `indexer.py` — Repository walker + incremental reindexing
+- `indexer.py` — Repository walker + incremental reindexing + orphan purge
 - `search.py` — Cosine similarity search with filters
 - `api.py` — FastAPI server (HTTP endpoints + MCP tool definitions)
 - `cli.py` — CLI interface for terminal use
-- `mcp_server.py` — MCP stdio server exposing 3 tools
+- `mcp_server.py` — MCP stdio server exposing 5 tools
+- `auto_reindex.py` — Cron-friendly auto-reindex for all registered repos
 
 ## Deploy on Another Agent
 
@@ -86,43 +87,51 @@ Required: `CODEINDEX_DB_PASSWORD`. All others have defaults (see `.env.example`)
 
 The MCP server auto-loads `~/.hermes/.env` on startup. When using Hermes, you STILL need the `env` block in the MCP config because Hermes filters subprocess env vars.
 
+### Auto-Reindex (optional cron)
+
+```bash
+# Manual run
+.venv/bin/python3 auto_reindex.py
+
+# Force full reindex of all repos
+.venv/bin/python3 auto_reindex.py --force
+
+# Hermes cron (every 4h — already configured)
+# See: cronjob action='list' → codebase-auto-reindex
+```
+
 ### Index First Repo
 
 ```bash
 .venv/bin/python3 cli.py index /path/to/repo
 ```
 
-## Quick Start
+## Keeping the Index Fresh
 
-### 1. Initialize Database (requires superuser once)
+### Incremental Reindex
 
-```bash
-sudo -u postgres psql -d codeindex -f /data/codebase-skill/init_db.sql
-```
-
-### 2. Index a Repository
-
-```bash
-# CLI
-cd /data/codebase-skill && .venv/bin/python3 cli.py index /path/to/repo
-
-# API
-curl -X POST http://localhost:8900/index \
-  -H "Content-Type: application/json" \
-  -d '{"repo_path": "/path/to/repo"}'
-```
-
-### 3. Search
+When you re-run `index` or call `reindex` on an already-indexed repo:
+1. **Modified files**: compared by `mtime` vs `last_indexed` — only changed files are re-parsed and re-embedded
+2. **Deleted files**: chunks for files no longer on disk are automatically purged from the DB
+3. Stats include `orphan_chunks_purged` count
 
 ```bash
-# CLI
-cd /data/codebase-skill && .venv/bin/python3 cli.py search "authentication middleware"
+# Via MCP
+# mcp_codebase_reindex(repo_path="/data/AIssistant")
+# mcp_codebase_reindex(repo_path="/data/AIssistant", force_reindex=true)
 
-# Or use the bin/ shortcuts
-./bin/cbsearch "authentication middleware"
-./bin/cbcontext /path/to/file.py --focus "tool registration"
-./bin/cbstats
+# Via CLI
+.venv/bin/python3 cli.py index /data/AIssistant   # incremental (fast)
+.venv/bin/python3 cli.py index /data/AIssistant --force  # full re-index
 ```
+
+### Auto-Reindex Cron
+
+A cron job (`codebase-auto-reindex`) runs `auto_reindex.py` every 4h, which:
+- Iterates all registered projects
+- Runs incremental reindex on each
+- Purges orphans
+- Reports only if changes were made
 
 ## MCP Tools
 
@@ -131,6 +140,8 @@ cd /data/codebase-skill && .venv/bin/python3 cli.py search "authentication middl
 | `search` | query, top_k, language, file_pattern, repo_path, min_score | Semantic search across indexed codebases |
 | `file_context` | file_path, focus, top_k | File's chunks + related chunks |
 | `stats` | repo_path? | Indexing statistics |
+| `reindex` | repo_path, force_reindex | Refresh repo: detect changes + purge deleted files |
+| `list_projects` | (none) | List all indexed repositories |
 
 ## Search Filters
 
@@ -177,9 +188,11 @@ Python, JavaScript, TypeScript, TSX, JSX, Go, Rust, Java, C, C++, C#, Ruby, PHP,
 
 8. **Hermes MCP env filtering.** Hermes filters subprocess env vars. You MUST include the `env` block in the mcp_servers config to pass `CODEINDEX_DB_PASSWORD` through, even though `mcp_server.py` auto-loads `~/.hermes/.env`.
 
-9. **Ollama 500 intermittents.** On `/api/embeddings`, Ollama can return 500 sporadically. The embedder retries 3x with exponential backoff. Expect slower indexing on large repos.
+9. **Ollama 500 intermittents.** On `/api/embeddings`, Ollama can return 500 sporadically. The embedder retries 3x with exponential backoff. Expect slower indexing on large repos. Never run two index operations simultaneously.
 
 10. **tree-sitter FutureWarning.** tree-sitter 0.21.x emits FutureWarning (no impact, compatibility with tree-sitter-languages).
+
+11. **Deleted file chunks are stale.** Orphan chunks for files removed from disk are purged during reindex. If you never reindex, they persist. The auto-reindex cron handles this automatically.
 
 ## Verification Checklist
 
@@ -189,4 +202,5 @@ Python, JavaScript, TypeScript, TSX, JSX, Go, Rust, Java, C, C++, C#, Ruby, PHP,
 - [ ] Index works: `.venv/bin/python3 cli.py index /some/repo`
 - [ ] Search returns results: `.venv/bin/python3 cli.py search "test"`
 - [ ] MCP tools appear in agent: check tool list
-- [ ] API healthy (if using): `curl http://localhost:8900/health`
+- [ ] Auto-reindex cron active: `cronjob action='list'`
+- [ ] Orphan purge works: delete a file, reindex, check stats for `orphan_chunks_purged > 0`
