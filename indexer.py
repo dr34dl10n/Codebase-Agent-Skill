@@ -200,7 +200,7 @@ class CodeIndexer:
                                 chunk.start_line,
                                 chunk.end_line,
                                 json.dumps(chunk.metadata),
-                                emb,
+                                [float(v) for v in emb],
                             ),
                         )
                         stored += 1

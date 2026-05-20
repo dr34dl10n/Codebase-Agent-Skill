@@ -63,7 +63,8 @@ class EmbeddingProvider:
                     data = resp.json()
                     emb = data.get("embedding", [])
                     if emb and len(emb) == self.config.dim:
-                        embeddings.append(emb)
+                        # Ensure all values are float — some models return ints
+                        embeddings.append([float(v) for v in emb])
                     else:
                         logger.warning(f"Bad embedding dim={len(emb)}, expected {self.config.dim}")
                         embeddings.append([0.0] * self.config.dim)
