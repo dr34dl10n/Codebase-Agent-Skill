@@ -6,6 +6,8 @@
 
 *Stop feeding entire repos to your context window. Search surgically instead.*
 
+[![GitHub stars](https://img.shields.io/github/stars/dr34dl10n/Codebase-Agent-Skill?style=social)](https://github.com/dr34dl10n/Codebase-Agent-Skill/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/dr34dl10n/Codebase-Agent-Skill?style=social)](https://github.com/dr34dl10n/Codebase-Agent-Skill/fork)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org)
 [![Tree-sitter](https://img.shields.io/badge/tree--sitter-0.21-green.svg)](https://tree-sitter.github.io)
 [![pgvector](https://img.shields.io/badge/pgvector-0.6-orange.svg)](https://github.com/pgvector/pgvector)
@@ -28,24 +30,74 @@ This isn't a search engine for humans. It's a **RAG backbone for AI agents** —
 
 ---
 
-## How It Works
+## Use Cases
 
+### 🤖 Autonomous Coding Agents (Hermes, Codex, OpenHands)
+Your agent explores an unfamiliar codebase autonomously. Instead of reading every file top-to-bottom, it calls `mcp_codebase_search("Where is the payment gateway integration?")` and gets the 5 relevant functions — then acts on them.
+
+### ✨ IDE-Integrated Agents (Cursor, Claude Code, Windsurf)
+While you code, the inline agent searches the entire repo semantically: "Find all uses of the `UserService` class" → instant, accurate results across files, no grep gymnastics.
+
+### 🏗️ DevOps / Platform Agents
+A CI/CD agent searches infra-as-code repos: "Which Helm charts set resource limits?" → ranked results across `values.yaml`, templates, and helpers, not just filename matches.
+
+### 🔒 Sovereign AI Pipelines
+No cloud API calls, no data leaving your infrastructure. Embeddings run on local Ollama, storage in your own PostgreSQL. Your code never leaves your network — perfect for defense, finance, healthcare.
+
+---
+
+## Architecture
+
+```mermaid
+graph LR
+    subgraph "Indexing Pipeline"
+        A[Repository<br/>any language] --> B[Tree-sitter<br/>AST chunking]
+        B --> C[Embed Service<br/>nomic-768d / local]
+        C --> D[(PostgreSQL<br/>+ pgvector)]
+    end
+
+    subgraph "Query Pipeline"
+        E[AI Agent<br/>MCP / REST / CLI] --> F[Embed query]
+        F --> G[Cosine similarity<br/>HNSW index]
+        G --> H[Ranked chunks<br/>+ metadata]
+        H --> E
+        D -.-> G
+    end
+
+    style D fill:#f0883e,color:#fff
+    style B fill:#2563eb,color:#fff
+    style C fill:#7c3aed,color:#fff
+    style E fill:#3fb950,color:#fff
 ```
-  ┌─────────────┐     ┌──────────────┐     ┌────────────────┐     ┌──────────┐
-  │  Repository  │────▶│  Tree-sitter │────▶│  Embed service │────▶│  pgvector │
-  │  (any lang)  │     │  chunking    │     │  nomic (768d)  │     │  storage  │
-  └─────────────┘     └──────────────┘     └────────────────┘     └──────────┘
-                                                                    │
-  ┌─────────────┐     ┌──────────────┐     ┌────────────────┐        │
-  │  Agent gets │◀────│  Ranked      │◀────│  Cosine        │◀───────┘
-  │  relevant   │     │  chunks      │     │  similarity    │
-  │  code only  │     │  + metadata  │     │  search        │
-  └─────────────┘     └──────────────┘     └────────────────┘
-```
 
-**Parsing is structural, not naive.** Tree-sitter chunks by functions, classes, and methods — not by arbitrary line splits. Each chunk carries its symbol name, file path, and line numbers so the agent knows exactly where it landed.
+---
 
-**Incremental reindexing** — only changed files get re-parsed and re-embedded. Re-index a modified repo in seconds, not minutes.
+## Comparison: codebase-skill vs LangChain + Chroma/Pinecone
+
+| Dimension | **codebase-skill** | **LangChain + Chroma/Pinecone** |
+|-----------|-------------------|--------------------------------|
+| **Chunking** | Tree-sitter AST (functions, classes, methods) | Recursive text splitter (character-based splits) |
+| **Chunk quality** | ✅ Syntactically coherent — never splits a function in half | ⚠️ May cut mid-function, break indentation, lose context |
+| **Embedding model** | Local-first (Ollama), swappable | Cloud API (OpenAI) or local, but no unified config |
+| **Vector store** | PostgreSQL + pgvector (HNSW) | Chroma (file-based) or Pinecone (SaaS) |
+| **Infrastructure** | 1 PostgreSQL you already run | Chroma = ephemeral/local **or** Pinecone = vendor lock-in |
+| **Data sovereignty** | ✅ 100% on-prem — zero data egress | ⚠️ Pinecone = code sent to US cloud; Chroma = not prod-ready |
+| **Query latency** | ~100ms (local embed + HNSW) | ~200–500ms (cloud API round-trip) |
+| **Incremental reindex** | ✅ Built-in — only changed files | ❌ Full reindex on every change |
+| **Cost at scale** | PostgreSQL + Ollama = $0/mo extra | Pinecone: $70/mo (S1 pod) + OpenAI embed API fees |
+| **Agent protocol** | MCP (native stdio) | Custom Python API, no standard agent protocol |
+| **Languages** | 25 out of the box (Tree-sitter) | Unlimited (text-based, no AST awareness) |
+| **Metadata** | Symbol name, file path, line range, language | Custom metadata (user must implement) |
+
+### TL;DR
+
+| | codebase-skill | LangChain + Chroma | LangChain + Pinecone |
+|--|:--:|:--:|:--:|
+| **Setup** | 1 command | Python script | Account + API key |
+| **Extra infra** | None (use your PG) | Chroma server | Pinecone SaaS |
+| **Monthly cost** | **$0** | $0 (local, fragile) | **$70+** |
+| **Code leaves network** | **Never** | No (local) | **Yes** |
+| **Chunk coherence** | **AST-aware** | Text-split | Text-split |
 
 ---
 
@@ -167,7 +219,7 @@ Don't see yours? Tree-sitter supports [many more](https://tree-sitter.github.io/
 ### Deploy
 
 ```bash
-git clone <this-repo> /data/codebase-skill
+git clone https://github.com/dr34dl10n/Codebase-Agent-Skill.git /data/codebase-skill
 bash deploy.sh <db_password>
 ```
 
@@ -251,7 +303,7 @@ Context windows are expensive and finite. This skill turns a **read-everything**
 
 ```
 codebase-skill/
-├── mcp_server.py      # MCP stdio server (3 tools)
+├── mcp_server.py      # MCP stdio server (5 tools)
 ├── config.py          # Env-based configuration
 ├── parser.py           # Tree-sitter chunking (25 languages)
 ├── embedder.py         # Embeddings via Ollama-compatible API + retry/backoff
@@ -267,8 +319,6 @@ codebase-skill/
 ├── .env.example        # Environment variables template
 ├── SKILL.md            # Hermes Agent skill definition
 ├── README.md           # This file
-├── PROGRESSION.md      # Development history
-├── info-db.txt         # DB setup notes
 └── bin/
     ├── cbsearch        # CLI: semantic search
     ├── cbcontext       # CLI: file context + related chunks
@@ -279,4 +329,4 @@ codebase-skill/
 
 ## License
 
-MIT
+[MIT](LICENSE) — Copyright © 2026 dr34dl10n

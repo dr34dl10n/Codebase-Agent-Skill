@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run quick sanity check
+        run: |
+          python -c "import parser; import embedder; import indexer; import search; import mcp_server; print('All modules import OK')"
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          echo "## What's new in $TAG" > release_notes.md
+          echo "" >> release_notes.md
+          echo "### codebase-skill — Semantic Code Search for AI Agents" >> release_notes.md
+          echo "" >> release_notes.md
+          echo "Built on **Tree-sitter + pgvector + MCP** — the RAG backbone your AI agent deserves." >> release_notes.md
+          echo "" >> release_notes.md
+          echo "### Quick start" >> release_notes.md
+          echo '```bash' >> release_notes.md
+          echo "git clone https://github.com/dr34dl10n/Codebase-Agent-Skill.git /data/codebase-skill" >> release_notes.md
+          echo "bash deploy.sh <db_password>" >> release_notes.md
+          echo '```' >> release_notes.md
+          echo "" >> release_notes.md
+          echo "### Checksums" >> release_notes.md
+          shasum *.py *.sh *.sql requirements.txt > checksums.txt 2>/dev/null || true
+          cat checksums.txt >> release_notes.md || true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release_notes.md
+          files: |
+            checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
