@@ -1,21 +1,22 @@
 """Configuration for codebase-skill.
 
-Embedding model selection:
+Embedding model selection (ModernBERT recommended — default):
   Set CODEINDEX_EMBED_MODEL to choose your model. If unset, defaults to
   modernbert-embed-base. Run `python scripts/detect_model.py` to auto-detect
   the best model for your hardware (writes the result to .env).
 
-  Supported models (sentence-transformers backend):
-    modernbert-embed-base   – 768-dim, 8192 context (fast on CPU)
-    modernbert-embed-large  – 1024-dim, 8192 context (better quality)
+  Recommended models (sentence_transformers backend — zero external deps):
+    modernbert-embed-base   – 768-dim, 8192 context (fast on CPU, default)
+    modernbert-embed-large  – 1024-dim, 8192 context (better quality, more RAM)
 
-  Supported models (Ollama backend):
-    nomic-embed-text        – 768-dim, ~8k context (best with GPU ≥8 GB)
+  Advanced: Ollama backend for GPU servers already running Ollama:
+    nomic-embed-text        – 768-dim, ~8k context (requires Ollama server)
 
   Backend selection:
     Set CODEINDEX_EMBED_BACKEND to "sentence_transformers" (default) or "ollama".
     ModernBERT models require the sentence_transformers backend.
     nomic-embed-text requires the ollama backend.
+    Auto-detected from model name if not set.
 """
 
 import os

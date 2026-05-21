@@ -1,8 +1,10 @@
-"""Embedding providers — Ollama API or sentence-transformers (direct Python).
+"""Embedding providers — sentence-transformers (direct Python) or Ollama API.
 
 Factory pattern: create_provider(config) returns the right backend.
-  - OllamaProvider: HTTP client to /api/embeddings (nomic-embed-text, cloud endpoints)
-  - SentenceTransformerProvider: loads model directly via HuggingFace (ModernBERT)
+  - SentenceTransformerProvider: loads model directly via HuggingFace (ModernBERT).
+    This is the default and recommended backend — zero external dependencies.
+  - OllamaProvider: HTTP client to /api/embeddings (nomic-embed-text, cloud endpoints).
+    Advanced option for setups that already run Ollama with a GPU.
 
 Swap models/providers by changing CODEINDEX_EMBED_MODEL and CODEINDEX_EMBED_BACKEND.
 """

@@ -11,9 +11,10 @@
 #   - Python 3.11+
 #
 # ModernBERT (default) auto-downloads from HuggingFace — no extra service needed.
-# Optional: Ollama for nomic-embed-text backend.
+# Optional: Ollama for nomic-embed-text (advanced — only if already running Ollama with GPU).
 #
-# After running this script, configure your agent's MCP server entry.
+# After running this script, configure your agent's MCP server entry
+# and run cbsetup to generate agent instruction files.
 # See README.md for details.
 
 set -euo pipefail
@@ -68,7 +69,7 @@ PGPASSWORD="$DB_PASSWORD" psql -h localhost -U "$DB_USER" -d "$DB_NAME" -c "
     SELECT extname, extversion FROM pg_extension WHERE extname = 'vector';
 " 2>/dev/null && echo "    pgvector: OK" || echo "    pgvector: FAILED"
 
-# Embedding service (Ollama or compatible)
+# Embedding service (Ollama is optional — only needed for nomic-embed-text)
 EMBED_API_BASE=${CODEINDEX_EMBED_API_BASE:-http://localhost:11434}
 EMBED_MODEL=${CODEINDEX_EMBED_MODEL:-}
 
@@ -76,7 +77,7 @@ EMBED_MODEL=${CODEINDEX_EMBED_MODEL:-}
 if [ -z "$EMBED_MODEL" ]; then
     EMBED_MODEL=$("$VENV_DIR/bin/python3" "$SCRIPT_DIR/scripts/detect_model.py" 2>/dev/null | head -1 | sed 's/Recommended model: //')
     if [ -z "$EMBED_MODEL" ]; then
-        EMBED_MODEL="modernbert-embed-base"  # sensible fallback (no Ollama needed)
+        EMBED_MODEL="modernbert-embed-base"  # default — no Ollama needed
     fi
 fi
 echo "    Embedding model: $EMBED_MODEL"
@@ -111,6 +112,9 @@ echo ""
 echo "Next steps:"
 echo "  1. Add these env vars to your agent config:"
 echo "     CODEINDEX_DB_PASSWORD=$DB_PASSWORD"
-echo "  2. Configure MCP server (see README.md)"
+echo "  2. Configure MCP server (see README.md), or run cbsetup to auto-configure"
 echo "  3. Index your first repo:"
 echo "     $VENV_DIR/bin/python3 $SCRIPT_DIR/cli.py index /path/to/repo"
+echo "  4. Generate agent instruction files + MCP configs:"
+echo "     $VENV_DIR/bin/python3 $SCRIPT_DIR/cbsetup.py /path/to/repo"
+echo "     # Or: $SCRIPT_DIR/bin/cbsetup /path/to/repo"

@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS code_chunks (
     start_line INTEGER,
     end_line INTEGER,
     metadata JSONB DEFAULT '{}',        -- module, git info, etc.
-    embedding VECTOR(768),              -- nomic-embed-text produces 768-dim vectors
+    embedding VECTOR(768),              -- ModernBERT/nomic produce 768-dim vectors (1024 for modernbert-embed-large)
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
 );

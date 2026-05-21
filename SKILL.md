@@ -14,7 +14,7 @@ metadata:
 
 ## Overview
 
-Turn any code repository into a searchable knowledge base using Tree-sitter parsing, embedding vectors (Ollama-compatible API), and pgvector. Instead of loading entire files into context, search surgically for the chunks you need.
+Turn any code repository into a searchable knowledge base using Tree-sitter parsing, embedding vectors (ModernBERT, zero-config), and pgvector. Instead of loading entire files into context, search surgically for the chunks you need.
 
 ## When to Use
 
@@ -34,7 +34,7 @@ Query → Embed service → cosine similarity search → ranked chunks
 
 Components:
 - `parser.py` — Tree-sitter based chunking (by function/class, not naive splitting)
-- `embedder.py` — Embedding providers (sentence-transformers: ModernBERT, or Ollama: nomic)
+- `embedder.py` — Embedding providers (ModernBERT via sentence-transformers; Ollama optional)
 - `indexer.py` — Repository walker + incremental reindexing + orphan purge
 - `search.py` — Cosine similarity search with filters
 - `api.py` — FastAPI server (HTTP endpoints + MCP tool definitions)
@@ -162,8 +162,8 @@ Environment variables (or defaults in `config.py`):
 | `CODEINDEX_DB_USER` | codeindex | DB user |
 | `CODEINDEX_DB_PASSWORD` | (required) | DB password |
 | `CODEINDEX_EMBED_MODEL` | modernbert-embed-base | Embedding model (run `python scripts/detect_model.py --write-env` to auto-detect) |
-| `CODEINDEX_EMBED_BACKEND` | auto | `sentence_transformers` or `ollama` (auto from model) |
-| `CODEINDEX_EMBED_API_BASE` | http://localhost:11434 | Embedding API base URL (Ollama-compatible) |
+| `CODEINDEX_EMBED_BACKEND` | auto (sentence_transformers) | `sentence_transformers` or `ollama` (auto-detected from model) |
+| `CODEINDEX_EMBED_API_BASE` | http://localhost:11434 | Embedding API base URL (only for ollama backend) |
 | `CODEINDEX_API_HOST` | 127.0.0.1 | API server host |
 | `CODEINDEX_API_PORT` | 8900 | API server port |
 
@@ -177,7 +177,7 @@ Python, JavaScript, TypeScript, TSX, JSX, Go, Rust, Java, C, C++, C#, Ruby, PHP,
 
 2. **tree-sitter version mismatch.** Use `tree-sitter<0.22` with `tree-sitter-languages>=1.10`. Newer tree-sitter has incompatible API.
 
-3. **Embedding model not available.** ModernBERT models auto-download from HuggingFace (sentence-transformers backend). If using Ollama backend: `ollama pull nomic-embed-text`.
+3. **Embedding model not available.** ModernBERT models auto-download from HuggingFace (sentence-transformers backend, zero config). If using the optional Ollama backend: `ollama pull nomic-embed-text`.
 
 4. **Large repos take time to embed.** First index of a 10k-file repo may take 10-30 min. Incremental reindex is fast (only changed files).
 
@@ -189,17 +189,85 @@ Python, JavaScript, TypeScript, TSX, JSX, Go, Rust, Java, C, C++, C#, Ruby, PHP,
 
 8. **Hermes MCP env filtering.** Hermes filters subprocess env vars. You MUST include the `env` block in the mcp_servers config to pass `CODEINDEX_DB_PASSWORD` through, even though `mcp_server.py` auto-loads `~/.hermes/.env`.
 
-9. **Embedding service 500 intermittents.** The `/api/embeddings` endpoint can return 500 sporadically (common with Ollama). The embedder retries 3x with exponential backoff. Expect slower indexing on large repos. Never run two index operations simultaneously.
+9. **Embedding service 500 intermittents (Ollama backend only).** With the Ollama backend, the `/api/embeddings` endpoint can return 500 sporadically. The embedder retries 3x with exponential backoff. This does not affect the default ModernBERT backend. Never run two index operations simultaneously.
 
 10. **tree-sitter FutureWarning.** tree-sitter 0.21.x emits FutureWarning (no impact, compatibility with tree-sitter-languages).
 
 11. **Deleted file chunks are stale.** Orphan chunks for files removed from disk are purged during reindex. If you never reindex, they persist. The auto-reindex cron handles this automatically.
 
+## Auto-Setup for All Agents (`cbsetup`)
+
+After indexing a repository, run `cbsetup` to **automatically generate instruction files and MCP configuration** for every supported coding agent. This ensures any agent working in the repo knows it must use semantic search before reading files.
+
+### What It Generates
+
+| File | Agent | Purpose |
+|------|-------|---------|
+| `AGENTS.md` | Pi, Codex, generic agents | Project instructions (search-first protocol) |
+| `CLAUDE.md` | Claude Code | Project instructions |
+| `.cursorrules` | Cursor (legacy) | Project rules |
+| `.cursor/rules/codebase-search.mdc` | Cursor (newer) | Always-apply project rule |
+| `.windsurfrules` | Windsurf / Codeium | Project rules |
+| `.clinerules` | Cline | Project rules |
+| `.github/copilot-instructions.md` | GitHub Copilot | Repo instructions |
+| `.claude/settings.json` | Claude Code | MCP server config |
+| `.cursor/mcp.json` | Cursor | MCP server config |
+| `.cline/mcp.json` | Cline | MCP server config |
+| `.windsurf/mcp.json` | Windsurf | MCP server config |
+| `.pi-indexed` | All agents | Marker with indexing metadata |
+
+Each instruction file tells the agent:
+1. This repo is indexed — use semantic search BEFORE reading files
+2. How to call the MCP tools (or CLI if MCP is unavailable)
+3. Never blindly grep/cat multiple files when search suffices
+
+### Usage
+
+```bash
+# Full setup — all agents, all MCP configs
+cbsetup /path/to/repo
+
+# Or via Python directly
+.venv/bin/python3 cbsetup.py /path/to/repo
+
+# Preview without writing
+.venv/bin/python3 cbsetup.py /path/to/repo --dry-run
+
+# Only instruction files, no MCP configs
+.venv/bin/python3 cbsetup.py /path/to/repo --instructions-only
+
+# Only MCP configs, no instruction files
+.venv/bin/python3 cbsetup.py /path/to/repo --mcp-only
+
+# Specific agents only
+.venv/bin/python3 cbsetup.py /path/to/repo --agents claude_md cursorrules --mcp claude cursor
+```
+
+### Idempotent & Safe
+
+- Existing files are **appended to**, never overwritten
+- A `<!-- codebase-skill:begin/end -->` marker allows automatic updates without losing existing content
+- Re-running `cbsetup` updates the section in place
+- The `.pi-indexed` marker file tracks indexing metadata
+
+### Typical Workflow
+
+```bash
+# 1. Index your repo
+.venv/bin/python3 cli.py index /data/myproject
+
+# 2. Generate agent files
+.venv/bin/python3 cbsetup.py /data/myproject
+
+# 3. Commit (optional — share the instructions with your team)
+cd /data/myproject && git add AGENTS.md CLAUDE.md .cursorrules .pi-indexed && git commit -m "Add codebase-skill search protocol"
+```
+
 ## Verification Checklist
 
 - [ ] pgvector extension installed: `SELECT * FROM pg_extension WHERE extname = 'vector';`
 - [ ] Embedding service running: `curl $CODEINDEX_EMBED_API_BASE/api/tags`
-- [ ] Embedding model configured: `python scripts/detect_model.py` (ModernBERT auto-downloads, Ollama needs `ollama pull`)
+- [ ] Embedding model configured: `python scripts/detect_model.py` (ModernBERT auto-downloads, no external service needed)
 - [ ] Index works: `.venv/bin/python3 cli.py index /some/repo`
 - [ ] Search returns results: `.venv/bin/python3 cli.py search "test"`
 - [ ] MCP tools appear in agent: check tool list

@@ -5,12 +5,16 @@ Standalone utility — run once at setup time. Prints the recommended model
 name and writes it to .env if needed.
 
 Strategy:
-  • No GPU detected           → modernbert-embed-base  (768-dim, 512 ctx)
+  • No GPU detected           → modernbert-embed-base  (768-dim, 8192 ctx)
     Fast on CPU, smallest model, good for lightweight machines.
-  • GPU with < 8 GB VRAM     → modernbert-embed-large (896-dim, 512 ctx)
+  • GPU with < 8 GB VRAM     → modernbert-embed-large (1024-dim, 8192 ctx)
     Leverages GPU for the larger model, better quality than base.
-  • GPU with ≥ 8 GB VRAM     → nomic-embed-text       (768-dim, ~8k ctx)
-    Enough VRAM for the long-context model with comfortable batching.
+  • GPU with ≥ 8 GB VRAM     → modernbert-embed-large (1024-dim, 8192 ctx)
+    Best quality via ModernBERT. Uses GPU acceleration if available.
+
+    Advanced option: if you already run Ollama, set CODEINDEX_EMBED_MODEL=nomic-embed-text
+    and CODEINDEX_EMBED_BACKEND=ollama manually. This script no longer recommends it
+    by default because ModernBERT provides zero-config quality that's close or better.
 
 Override at any time with CODEINDEX_EMBED_MODEL.
 
@@ -39,7 +43,7 @@ MODEL_INFO = {
         "dim": 768,
         "max_text_len": 32000,
         "context_tokens": "~8k",
-        "best_for": "Large GPU (≥8 GB)",
+        "best_for": "Advanced: Ollama setups with GPU",
         "backend": "ollama",
     },
     "modernbert-embed-large": {
@@ -99,18 +103,19 @@ def detect_gpu_vram() -> float:
 
 
 def recommend_model(vram: float = None) -> tuple[str, str]:
-    """Return (model_name, reason) based on detected hardware."""
+    """Return (model_name, reason) based on detected hardware.
+
+    ModernBERT is always recommended. nomic-embed-text is available
+    as an advanced option for Ollama setups but is not auto-recommended.
+    """
     if vram is None:
         vram = detect_gpu_vram()
 
     if vram == 0.0:
         return "modernbert-embed-base", "No GPU detected — CPU-only machine"
-    elif vram < GPU_VRAM_THRESHOLD_GB:
-        return "modernbert-embed-large", \
-            f"GPU detected ({vram:.1f} GB VRAM < {GPU_VRAM_THRESHOLD_GB:.0f} GB threshold)"
     else:
-        return "nomic-embed-text", \
-            f"GPU detected ({vram:.1f} GB VRAM ≥ {GPU_VRAM_THRESHOLD_GB:.0f} GB threshold)"
+        return "modernbert-embed-large", \
+            f"GPU detected ({vram:.1f} GB VRAM) — using GPU-accelerated ModernBERT"
 
 
 def write_env(model: str, env_path: Path) -> None:

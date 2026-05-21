@@ -42,7 +42,7 @@ Eight representative developer queries, compared across models and strategies.
 | **Naive Traditional** (grep → read all) | ~16ms | ~44M | 1× | — |
 | **Smart Traditional** (grep → top-5 files) | ~18ms | ~3.8M | 0.1× | 1× |
 | **ModernBERT-base + pgvector** ⭐ | **66ms** | **~3.2K** | **13,700×** | **1,185×** |
-| **Nomic-embed + pgvector** | 59ms | ~2.8K | 15,700× | 1,352× |
+| **Nomic-embed + pgvector** *(optional)* | 59ms | ~2.8K | 15,700× | 1,352× |
 
 > **13,700× less context** than naive grep. That's the difference between sending an entire codebase and sending 3 chunks to your LLM.
 
@@ -68,24 +68,24 @@ AVERAGE                                    66ms/3.2Ktok            59ms/2.8Ktok
 
 ### Model Comparison: What This Means
 
-| | ModernBERT-base | Nomic-embed-text |
+| | ModernBERT-base (default) | Nomic-embed-text (optional) |
 |--|:--:|:--:|
 | **Top-1 similarity** | Wins 3/8 queries | Wins 5/8 queries |
 | **Avg query latency** | ~66ms | ~59ms |
 | **Avg context returned** | ~3.2K tokens | ~2.8K tokens |
 | **Context window** | 8,192 tokens | ~8,192 tokens |
 | **Dimensions** | 768 | 768 |
-| **Backend** | sentence-transformers (Python) | Ollama (API server) |
+| **Backend** | sentence-transformers (Python, zero-config) | Ollama (requires running server) |
 | **External dependency** | ❌ None — model loads in-process | ✅ Ollama must be running |
 | **Setup** | `pip install sentence-transformers` | `ollama pull nomic-embed-text` |
 | **Model download** | Auto from HuggingFace | Manual `ollama pull` |
-| **Best for** | **Zero-config deployment, sovereign AI** | GPU servers with Ollama already set up |
+| **Best for** | **Default. All setups.** | GPU servers with Ollama already running |
 
 ### Takeaway
 
 - Both models deliver **3–4 orders of magnitude** context reduction vs grep.
 - **ModernBERT is the default** — zero-config, no running service, pure Python.
-- Nomic scores slightly higher on average, but requires Ollama as a separate process.
+- Nomic scores slightly higher on some queries but requires a separate Ollama server.
 - **ModernBERT wins** on complex structural queries ("agent run loop", "OAuth flow"), Nomic wins on keyword-aligned queries.
 - At ~60ms/query, both are fast enough for interactive agent use.
 - The **real cost saving** is tokens: 3K tokens vs 44M tokens means your LLM calls cost **~14,700× less**.
@@ -114,7 +114,7 @@ No cloud API calls, no data leaving your infrastructure. ModernBERT loads in-pro
 graph LR
     subgraph "Indexing Pipeline"
         A[Repository<br/>any language] --> B[Tree-sitter<br/>AST chunking]
-        B --> C[Embed Model<br/>ModernBERT / Nomic]
+        B --> C[Embed Model<br/>ModernBERT (default)<br/>Nomic (optional)]
         C --> D[(PostgreSQL<br/>+ pgvector)]
     end
 
@@ -140,7 +140,7 @@ graph LR
 |-----------|-------------------|--------------------------------|
 | **Chunking** | Tree-sitter AST (functions, classes, methods) | Recursive text splitter (character-based splits) |
 | **Chunk quality** | ✅ Syntactically coherent — never splits a function in half | ⚠️ May cut mid-function, break indentation, lose context |
-| **Embedding model** | ModernBERT (in-process) or Ollama (API) | Cloud API (OpenAI) or local, but no unified config |
+| **Embedding model** | ModernBERT (default, in-process) or Ollama (optional API) | Cloud API (OpenAI) or local, but no unified config |
 | **Vector store** | PostgreSQL + pgvector (HNSW) | Chroma (file-based) or Pinecone (SaaS) |
 | **Infrastructure** | 1 PostgreSQL you already run | Chroma = ephemeral/local **or** Pinecone = vendor lock-in |
 | **Data sovereignty** | ✅ 100% on-prem — zero data egress | ⚠️ Pinecone = code sent to US cloud; Chroma = not prod-ready |
@@ -169,7 +169,7 @@ graph LR
 |-------|------|-----|
 | **Parsing** | [Tree-sitter](https://tree-sitter.github.io) + tree-sitter-languages | AST-aware chunking by function/class, not line splits. 25 languages. |
 | **Embeddings** | [ModernBERT](https://huggingface.co/nomic-ai/modernbert-embed-base) (sentence-transformers) | Default. In-process, zero-config, auto-downloads from HuggingFace. |
-| | [Nomic-embed-text](https://ollama.com/library/nomic-embed-text) (Ollama) | Alternative. Requires Ollama server. Better for GPU servers. |
+| | [Nomic-embed-text](https://ollama.com/library/nomic-embed-text) (Ollama) | Optional. Requires a running Ollama server. |
 | **Storage** | [PostgreSQL](https://postgresql.org) + [pgvector](https://github.com/pgvector/pgvector) | HNSW index for sub-ms cosine search. ACID, proven, no new infra. |
 | **Agent Interface** | [MCP](https://modelcontextprotocol.io) (stdio) | Standard protocol — works with Hermes, Claude Code, Cursor, Pi, Codex, any MCP client. |
 | **API** | [FastAPI](https://fastapi.tiangolo.com) | Optional HTTP endpoints. Same logic, REST access. |
@@ -243,12 +243,12 @@ Don't see yours? Tree-sitter supports [many more](https://tree-sitter.github.io/
 - PostgreSQL 15+ (with sudo to create extensions)
 - Python 3.11+
 
-**That's it.** ModernBERT auto-downloads from HuggingFace — no Ollama, no separate services.
+**That's it.** ModernBERT auto-downloads from HuggingFace — no external service, no Ollama, no API keys.
 
 <details>
-<summary>Optional: Using Nomic-embed-text via Ollama instead</summary>
+<summary>Optional: Using Nomic-embed-text via Ollama</summary>
 
-If you prefer the Ollama backend (better on GPU servers with Ollama already set up):
+If you already have Ollama running on a GPU server and prefer that backend:
 
 ```bash
 ollama serve
@@ -311,6 +311,67 @@ mcp_servers:
 
 ---
 
+## Auto-Setup for All Agents (`cbsetup`)
+
+After indexing a repository, run `cbsetup` to **automatically generate instruction files and MCP configuration** for every supported coding agent. This ensures any agent opening the project knows it must use semantic search before reading files.
+
+### Supported Agent Files
+
+| File | Agent | What it does |
+|------|-------|-------------|
+| `AGENTS.md` | Pi, Codex, generic | Project instructions (search-first protocol) |
+| `CLAUDE.md` | Claude Code | Project instructions |
+| `.cursorrules` | Cursor (legacy) | Project rules |
+| `.cursor/rules/codebase-search.mdc` | Cursor (newer) | Always-apply project rule |
+| `.windsurfrules` | Windsurf / Codeium | Project rules |
+| `.clinerules` | Cline | Project rules |
+| `.github/copilot-instructions.md` | GitHub Copilot | Repo instructions |
+| `.claude/settings.json` | Claude Code | MCP server config |
+| `.cursor/mcp.json` | Cursor | MCP server config |
+| `.cline/mcp.json` | Cline | MCP server config |
+| `.windsurf/mcp.json` | Windsurf | MCP server config |
+| `.pi-indexed` | All agents | Marker with indexing metadata |
+
+### Usage
+
+```bash
+# Full setup — all agents, all MCP configs
+.venv/bin/python3 cbsetup.py /path/to/repo
+# Or via wrapper:
+cbsetup /path/to/repo
+
+# Preview without writing
+.venv/bin/python3 cbsetup.py /path/to/repo --dry-run
+
+# Only instruction files, no MCP configs
+.venv/bin/python3 cbsetup.py /path/to/repo --instructions-only
+
+# Only MCP configs, no instruction files  
+.venv/bin/python3 cbsetup.py /path/to/repo --mcp-only
+
+# Specific agents only
+.venv/bin/python3 cbsetup.py /path/to/repo --agents claude_md cursorrules --mcp claude cursor
+```
+
+### Idempotent & Safe
+
+- Existing files are **appended to**, never overwritten. A `<!-- codebase-skill:begin/end -->` marker allows automatic updates without losing existing content.
+- Re-running `cbsetup` updates the section in place.
+- The `.pi-indexed` marker file tracks indexing metadata for programmatic detection.
+
+### Typical Workflow
+
+```bash
+# 1. Index your repo
+.venv/bin/python3 cli.py index /data/myproject
+
+# 2. Generate agent files
+.venv/bin/python3 cbsetup.py /data/myproject
+
+# 3. Commit (optional — share the instructions with your team)
+cd /data/myproject && git add AGENTS.md CLAUDE.md .cursorrules .pi-indexed && git commit -m "Add codebase-skill search protocol"
+```
+
 ## Configuration
 
 | Variable | Default | Purpose |
@@ -321,7 +382,7 @@ mcp_servers:
 | `CODEINDEX_DB_USER` | codeindex | DB user |
 | `CODEINDEX_DB_PASSWORD` | **(required)** | DB password |
 | `CODEINDEX_EMBED_MODEL` | modernbert-embed-base | Embedding model (run `python scripts/detect_model.py` to auto-detect) |
-| `CODEINDEX_EMBED_BACKEND` | auto | `sentence_transformers` or `ollama` (auto-detected from model) |
+| `CODEINDEX_EMBED_BACKEND` | sentence_transformers (auto) | `sentence_transformers` or `ollama` (auto-detected from model) |
 | `CODEINDEX_EMBED_API_BASE` | http://localhost:11434 | Ollama API URL (only for ollama backend) |
 | `CODEINDEX_API_HOST` | 127.0.0.1 | API server host |
 | `CODEINDEX_API_PORT` | 8900 | API server port |
@@ -336,7 +397,7 @@ The default model is **ModernBERT-embed-base** — loaded in-process via sentenc
 |-------|---------|-----|---------|----------|
 | `modernbert-embed-base` ⭐ | sentence_transformers | 768 | 8,192 tokens | **Default. CPU-only, zero config.** |
 | `modernbert-embed-large` | sentence_transformers | 1024 | 8,192 tokens | Better quality, more RAM |
-| `nomic-embed-text` | ollama | 768 | ~8,192 tokens | GPU servers with Ollama already set up |
+| `nomic-embed-text` | ollama | 768 | ~8,192 tokens | Optional. Requires Ollama server |
 
 Run `python scripts/detect_model.py` to auto-detect the best model for your hardware:
 
@@ -350,7 +411,7 @@ python scripts/detect_model.py --json        # machine-readable output
 |-------------|-------------------|---------|-----|
 | **No GPU** | `modernbert-embed-base` | sentence_transformers | Fastest on CPU, smallest footprint |
 | **GPU < 8 GB** | `modernbert-embed-large` | sentence_transformers | Leverages GPU for quality |
-| **GPU ≥ 8 GB** | `nomic-embed-text` | ollama | Best quality, requires Ollama |
+| **GPU ≥ 8 GB** | `nomic-embed-text` | ollama | Optional. Requires already-running Ollama |
 
 > **⚠️ Important:** If you change model after indexing, you must re-index from scratch (embeddings must match the new model's dimension).
 
@@ -378,10 +439,11 @@ codebase-skill/
 ├── mcp_server.py      # MCP stdio server (5 tools)
 ├── config.py          # Env-based configuration + model/backend selection
 ├── parser.py           # Tree-sitter chunking (25 languages)
-├── embedder.py         # Embedding providers (sentence-transformers + Ollama)
+├── embedder.py         # Embedding providers (ModernBERT default; Ollama optional)
 ├── indexer.py          # Repository walker + incremental reindex
 ├── search.py           # Cosine similarity search + filters
 ├── api.py              # FastAPI HTTP server (optional)
+├── cbsetup.py          # Generate agent instruction files + MCP configs
 ├── cli.py              # CLI interface
 ├── benchmark.py        # Model comparison benchmark
 ├── init_db.sql         # Database schema
@@ -397,7 +459,8 @@ codebase-skill/
 └── bin/
     ├── cbsearch        # CLI: semantic search
     ├── cbcontext       # CLI: file context + related chunks
-    └── cbstats         # CLI: indexing statistics
+    ├── cbstats         # CLI: indexing statistics
+    └── cbsetup         # CLI: generate agent files for indexed repos
 ```
 
 ---

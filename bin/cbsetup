@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# cbsetup — Generate agent instruction files and MCP configs for an indexed repository
+#
+# Usage:
+#   cbsetup <repo_path> [options]
+#
+# Options:
+#   --agents <list>       Which agent instruction files to generate
+#                         (agents_md, claude_md, cursorrules, cursor_rules,
+#                          windsurfrules, clinerules, copilot)
+#   --mcp <list>          Which MCP configs to generate
+#                         (claude, cursor, cline, windsurf)
+#   --instructions-only   Skip MCP configs
+#   --mcp-only            Skip instruction files
+#   --dry-run              Show what would be written without writing
+#   --skill-dir <path>    Path to codebase-skill directory
+#
+# Examples:
+#   cbsetup /path/to/repo                        # All files, all agents
+#   cbsetup /path/to/repo --dry-run              # Preview
+#   cbsetup /path/to/repo --agents claude_md      # Only CLAUDE.md
+#   cbsetup /path/to/repo --mcp claude cursor     # Only MCP configs for Claude & Cursor
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+exec "$SCRIPT_DIR/.venv/bin/python3" "$SCRIPT_DIR/cbsetup.py" "$@"
