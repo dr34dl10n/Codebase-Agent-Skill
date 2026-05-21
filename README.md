@@ -6,6 +6,10 @@
 
 *Stop feeding entire repos to your context window. Search surgically instead.*
 
+<div align="center">
+  <img src="docs/assets/codebase-skill-banner.jpg" alt="codebase-skill — Semantic Code Search for AI Agents" width="800"/>
+</div>
+
 [![GitHub stars](https://img.shields.io/github/stars/dr34dl10n/Codebase-Agent-Skill?style=social)](https://github.com/dr34dl10n/Codebase-Agent-Skill/stargazers)
 [![GitHub forks](https://img.shields.io/github/forks/dr34dl10n/Codebase-Agent-Skill?style=social)](https://github.com/dr34dl10n/Codebase-Agent-Skill/fork)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org)
