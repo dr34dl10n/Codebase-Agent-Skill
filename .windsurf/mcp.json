@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "codebase-skill": {
+      "command": "./.venv/bin/python3",
+      "args": [
+        "./mcp_server.py"
+      ],
+      "env": {}
+    }
+  }
+}
