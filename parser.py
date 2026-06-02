@@ -130,6 +130,14 @@ def parse_file(file_path: str, config: ParseConfig) -> list[CodeChunk]:
     
     chunks: list[CodeChunk] = []
     
+    # Markdown parser has a known C++ assertion bug that calls abort()
+    # (vendor/tree-sitter-markdown scanner.cc:56 assertion `i <= 1024`).
+    # This crashes the entire process — cannot be caught with try/except.
+    # For markdown, line-based chunking is sufficient (no function definitions
+    # to extract) and avoids the crash entirely.
+    if language == "markdown":
+        return _chunk_by_lines(source, file_path, language, config)
+
     try:
         parser = _get_parser(language)
         tree = parser.parse(source.encode("utf-8"))

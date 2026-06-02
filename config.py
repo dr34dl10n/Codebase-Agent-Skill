@@ -77,6 +77,7 @@ class DBConfig:
         return f"postgresql://{self.user}:***@{self.host}:{self.port}/{self.database}"
 
 
+
 # Model dimension lookup – keeps dim in sync with the chosen model.
 _MODEL_DIMS = {
     "nomic-embed-text":       768,
