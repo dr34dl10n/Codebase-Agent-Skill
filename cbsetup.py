@@ -88,13 +88,17 @@ Or wrapper scripts:
 # MCP server configuration — varies by agent
 # ---------------------------------------------------------------------------
 
-def mcp_server_config(skill_dir: str) -> dict:
-    """MCP server configuration for codebase-skill (stdio transport)."""
+def mcp_server_config(skill_dir: str, repo_dir: str) -> dict:
+    """MCP server configuration for codebase-skill (stdio transport).
+
+    Uses relative paths from repo_dir so the config is portable across machines.
+    """
+    rel = os.path.relpath(skill_dir, repo_dir)
     return {
         "mcpServers": {
             "codebase-skill": {
-                "command": f"{skill_dir}/.venv/bin/python3",
-                "args": [f"{skill_dir}/mcp_server.py"],
+                "command": f"{rel}/.venv/bin/python3",
+                "args": [f"{rel}/mcp_server.py"],
                 "env": {
                     # Inherit DB and embedding config from the skill's .env
                     # If needed, override here
@@ -277,8 +281,12 @@ def run_setup(repo_path: str, skill_dir: str, agents: list[str] | None = None,
         chunks = 0
 
     skill_dir_resolved = str(Path(skill_dir).resolve())
+
+    # Use relative path from repo for portability in config files
+    skill_dir_rel = os.path.relpath(skill_dir_resolved, str(repo))
+
     content = generate_instruction_content(skill_dir_resolved, str(repo), chunks)
-    config = mcp_server_config(skill_dir_resolved)
+    config = mcp_server_config(skill_dir_resolved, str(repo))
 
     written = []
 
@@ -322,7 +330,7 @@ def run_setup(repo_path: str, skill_dir: str, agents: list[str] | None = None,
     # --- .pi-indexed marker ---
     pi_indexed = repo / ".pi-indexed"
     if not dry_run:
-        write_pi_indexed(pi_indexed, str(repo), chunks, skill_dir_resolved)
+        write_pi_indexed(pi_indexed, str(repo), chunks, skill_dir_rel)
         print(f"  ✓ Written: {pi_indexed}")
     else:
         print(f"  Would write: {pi_indexed}")
