@@ -244,6 +244,11 @@ Don't see yours? Tree-sitter supports [many more](https://tree-sitter.github.io/
 
 ### Prerequisites
 
+**Option A — Docker mode (recommended, zero sudo):**
+- Docker + docker compose
+- Python 3.11+
+
+**Option B — Local PostgreSQL mode:**
 - PostgreSQL 15+ (with sudo to create extensions)
 - Python 3.11+
 
@@ -267,10 +272,39 @@ Then set `CODEINDEX_EMBED_MODEL=nomic-embed-text` and `CODEINDEX_EMBED_BACKEND=o
 
 ```bash
 git clone https://github.com/dr34dl10n/Codebase-Agent-Skill.git /data/codebase-skill
+cd /data/codebase-skill
+```
+
+**Docker mode** (PostgreSQL in a container — no sudo, no local PG needed):
+
+```bash
+bash deploy.sh --docker
+```
+
+This clones/builds the [pgvectordb](https://github.com/dr34dl10n/pgvectordb) Docker image (PG 17 + pgvector), starts it, creates tables, sets up the Python venv, and writes a `.env` file. The DB runs on port 5433 by default.
+
+**Local PostgreSQL mode** (use an existing PG installation):
+
+```bash
 bash deploy.sh <db_password>
 ```
 
 That one command creates: DB user, database, pgvector extension, tables, Python venv + all dependencies, and runs a verification check.
+
+### Database modes at a glance
+
+| | Local PostgreSQL | Docker (`--docker`) |
+|--|:--:|:--:|
+| **Requires** | PG 15+ installed, sudo | Docker + compose |
+| **Port** | 5432 | 5433 |
+| **DB name** | codeindex | codebase |
+| **DB user** | codeindex | postgres |
+| **Default password** | *(you choose)* | postgres |
+| **Schema init** | `init_db.sql` via psql | Auto on first container start |
+| **Data persistence** | Your PG data dir | Docker volume `pgvectordb_data` |
+| **Good for** | Servers already running PG | Dev machines, CI, no-sudo setups |
+
+Switch modes anytime by setting `CODEINDEX_DB_MODE=local` or `CODEINDEX_DB_MODE=docker` in `.env`.
 
 ### Configure your agent
 
@@ -378,13 +412,15 @@ cd /data/myproject && git add AGENTS.md CLAUDE.md .cursorrules .pi-indexed && gi
 
 ## Configuration
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `CODEINDEX_DB_HOST` | localhost | PostgreSQL host |
-| `CODEINDEX_DB_PORT` | 5432 | PostgreSQL port |
-| `CODEINDEX_DB_NAME` | codeindex | Database name |
-| `CODEINDEX_DB_USER` | codeindex | DB user |
-| `CODEINDEX_DB_PASSWORD` | **(required)** | DB password |
+| Variable | Default (local) | Default (docker) | Purpose |
+|----------|:---:|:---:|---------|
+| `CODEINDEX_DB_MODE` | local | docker | Database mode: `local` or `docker` |
+| `CODEINDEX_DB_HOST` | localhost | localhost | PostgreSQL host |
+| `CODEINDEX_DB_PORT` | 5432 | 5433 | PostgreSQL port |
+| `CODEINDEX_DB_NAME` | codeindex | codebase | Database name |
+| `CODEINDEX_DB_USER` | codeindex | postgres | DB user |
+| `CODEINDEX_DB_PASSWORD` | **(required)** | postgres | DB password |
+| `CODEINDEX_DOCKER_REPO` | — | /data/docker-pgvectordb | Path to pgvectordb repo (docker mode) |
 | `CODEINDEX_EMBED_MODEL` | modernbert-embed-base | Embedding model (run `python scripts/detect_model.py` to auto-detect) |
 | `CODEINDEX_EMBED_BACKEND` | sentence_transformers (auto) | `sentence_transformers` or `ollama` (auto-detected from model) |
 | `CODEINDEX_EMBED_API_BASE` | http://localhost:11434 | Ollama API URL (only for ollama backend) |

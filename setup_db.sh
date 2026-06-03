@@ -4,6 +4,7 @@
 #   CODEINDEX_DB_PASSWORD=<pass> bash setup_db.sh
 #
 # For full deployment (DB + venv + deps), use deploy.sh instead.
+# For Docker mode (no sudo needed), use: bash deploy.sh --docker
 
 set -e
 

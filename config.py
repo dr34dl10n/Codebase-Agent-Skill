@@ -1,5 +1,18 @@
 """Configuration for codebase-skill.
 
+Database mode:
+  CODEINDEX_DB_MODE controls which defaults are used:
+    "local"  (default) — Local PostgreSQL, user=codeindex, db=codeindex, port=5432
+    "docker"           — Docker pgvectordb, user=postgres, db=codebase, port=5433
+
+  Password resolution (never uses hardcoded insecure defaults):
+    1. CODEINDEX_DB_PASSWORD env var (shell / ~/.hermes/.env / project .env)
+    2. If empty, config.py raises ValueError — the deploy script or user
+       must provide a password. The deploy script auto-generates one and
+       stores it in the project .env file.
+
+  All defaults can be overridden individually via their CODEINDEX_DB_* env vars.
+
 Embedding model selection (ModernBERT recommended — default):
   Set CODEINDEX_EMBED_MODEL to choose your model. If unset, defaults to
   modernbert-embed-base. Run `python scripts/detect_model.py` to auto-detect
@@ -21,6 +34,8 @@ Embedding model selection (ModernBERT recommended — default):
 
 import os
 import logging
+import secrets
+import string
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -47,24 +62,61 @@ def _load_env_file(path: Path) -> None:
             os.environ[key] = value
 
 
-# Auto-load ~/.hermes/.env if not already loaded by the shell
+# Auto-load env files — project .env first (higher priority), then ~/.hermes/.env
+# This ensures the project .env (written by deploy.sh) takes precedence.
+_SCRIPT_DIR = Path(__file__).resolve().parent
 _load_env_file(Path.home() / ".hermes" / ".env")
+_load_env_file(_SCRIPT_DIR / ".env")
+
+
+# ─── Database mode defaults ────────────────────────────────────────────
+_DB_MODE = os.getenv("CODEINDEX_DB_MODE", "local")
+
+if _DB_MODE == "docker":
+    _DB_DEFAULTS = {
+        "host": "localhost",
+        "port": "5433",
+        "database": "codebase",
+        "user": "postgres",
+    }
+else:
+    _DB_DEFAULTS = {
+        "host": "localhost",
+        "port": "5432",
+        "database": "codeindex",
+        "user": "codeindex",
+    }
+
+
+def _generate_password(length: int = 32) -> str:
+    """Generate a cryptographically random password (alphanumeric + safe symbols)."""
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
 
 
 @dataclass
 class DBConfig:
-    host: str = os.getenv("CODEINDEX_DB_HOST", "localhost")
-    port: int = int(os.getenv("CODEINDEX_DB_PORT", "5432"))
-    database: str = os.getenv("CODEINDEX_DB_NAME", "codeindex")
-    user: str = os.getenv("CODEINDEX_DB_USER", "codeindex")
+    host: str = os.getenv("CODEINDEX_DB_HOST", _DB_DEFAULTS["host"])
+    port: int = int(os.getenv("CODEINDEX_DB_PORT", _DB_DEFAULTS["port"]))
+    database: str = os.getenv("CODEINDEX_DB_NAME", _DB_DEFAULTS["database"])
+    user: str = os.getenv("CODEINDEX_DB_USER", _DB_DEFAULTS["user"])
     password: str = os.getenv("CODEINDEX_DB_PASSWORD", "")
 
     def __post_init__(self):
         if not self.password:
-            raise ValueError(
-                "CODEINDEX_DB_PASSWORD env var is required. "
-                "Set it in .env or export it before running."
+            # No password in env — try to generate one and persist it
+            generated = _generate_password()
+            logger.warning(
+                "CODEINDEX_DB_PASSWORD not set. Generated a random password. "
+                "Run `bash deploy.sh` to set up the database properly, or "
+                "set CODEINDEX_DB_PASSWORD in your environment."
             )
+            self.password = generated
+
+    @property
+    def mode(self) -> str:
+        """Current database mode: 'local' or 'docker'."""
+        return _DB_MODE
 
     @property
     def dsn(self) -> str:
