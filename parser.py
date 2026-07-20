@@ -4,7 +4,9 @@ Chunks code by functions, classes, methods — not by naive text splitting.
 Each chunk preserves file path, symbol name, and line numbers as metadata.
 """
 
+import fnmatch
 import os
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -248,19 +250,136 @@ def _chunk_by_lines(
     return chunks
 
 
+def _parse_gitignore(repo_path: Path) -> list[str]:
+    """Read .gitignore patterns from the repo root and return them as a list."""
+    patterns: list[str] = []
+    gitignore = repo_path / ".gitignore"
+    if gitignore.is_file():
+        for line in gitignore.read_text(errors="replace").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                patterns.append(line)
+    return patterns
+
+
+def _is_ignored(path: Path, repo: Path, patterns: list[str]) -> bool:
+    """Check if a path matches any .gitignore pattern (simplified gitignore semantics)."""
+    try:
+        rel = path.relative_to(repo)
+    except ValueError:
+        return False
+    parts = rel.parts
+    for pat in patterns:
+        # Directory patterns (trailing slash)
+        if pat.endswith("/"):
+            dirname = pat[:-1]
+            if dirname in parts[:-1] or parts and parts[-1] == dirname:
+                return True
+            # also match any ancestor
+            for i in range(len(parts) - 1):
+                if parts[i] == dirname:
+                    return True
+        # Negation patterns — not fully supported, skip
+        elif pat.startswith("!"):
+            continue
+        # Simple patterns: match against any path segment or full relative path
+        else:
+            if fnmatch.fnmatch(parts[-1], pat):
+                return True
+            if fnmatch.fnmatch(str(rel), pat):
+                return True
+            # match any ancestor dir against pattern
+            for part in parts[:-1]:
+                if fnmatch.fnmatch(part, pat):
+                    return True
+    return False
+
+
+def _matches_skip_segment(rel_path: str, skip_segments: set[str]) -> bool:
+    """Check if a relative path contains any skip segment (e.g. 'assets/data')."""
+    if not skip_segments:
+        return False
+    normalized = rel_path.replace("\\", "/")
+    for seg in skip_segments:
+        if seg in normalized:
+            return True
+    return False
+
+
+def _git_ls_files(repo: Path, config: ParseConfig) -> Optional[list[str]]:
+    """Use `git ls-files` to get tracked files (respects .gitignore natively).
+
+    Returns absolute paths, filtered by supported extensions.
+    Returns None if not a git repo or git command fails.
+    """
+    if not (repo / ".git").exists():
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "ls-files"],
+            cwd=str(repo),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            return None
+    except (subprocess.SubprocessError, OSError):
+        return None
+
+    files: list[str] = []
+    for line in result.stdout.splitlines():
+        fpath = str(repo / line)
+        if not os.path.isfile(fpath):
+            continue
+        ext = Path(line).suffix
+        if ext not in config.supported_extensions:
+            continue
+        if _matches_skip_segment(line, config.skip_path_segments):
+            continue
+        files.append(fpath)
+    return files
+
+
 def walk_repository(repo_path: str, config: ParseConfig) -> list[str]:
-    """Walk a repository and return list of parseable file paths."""
-    files = []
+    """Walk a repository and return list of parseable file paths.
+
+    If the repo is a git repository, uses `git ls-files` which respects
+    .gitignore natively. Otherwise, falls back to os.walk with skip_dirs
+    and manual .gitignore parsing.
+    """
     repo = Path(repo_path).resolve()
-    
+
+    # Primary path: git ls-files (respects .gitignore perfectly)
+    git_files = _git_ls_files(repo, config)
+    if git_files is not None:
+        return sorted(git_files)
+
+    # Fallback: os.walk + .gitignore + skip_dirs
+    files: list[str] = []
+    ignore_patterns = _parse_gitignore(repo)
+
     for root, dirs, filenames in os.walk(repo):
-        dirs[:] = [d for d in sorted(dirs) if d not in config.skip_dirs 
-                   and not d.startswith(".")]
-        
+        # Prune skip_dirs and hidden dirs in-place
+        dirs[:] = [
+            d for d in sorted(dirs)
+            if d not in config.skip_dirs and not d.startswith(".")
+        ]
+
+        # Prune dirs matching .gitignore patterns
+        if ignore_patterns:
+            dirs[:] = [
+                d for d in dirs
+                if not _is_ignored(Path(root) / d, repo, ignore_patterns)
+            ]
+
         for fname in sorted(filenames):
             fpath = os.path.join(root, fname)
             ext = Path(fname).suffix
-            if ext in config.supported_extensions:
-                files.append(fpath)
-    
+            if ext not in config.supported_extensions:
+                continue
+            if ignore_patterns and _is_ignored(Path(fpath), repo, ignore_patterns):
+                continue
+            files.append(fpath)
+
     return files

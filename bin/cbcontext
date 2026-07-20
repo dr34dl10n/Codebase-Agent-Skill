@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/data/codebase-skill/.venv/bin/python3
 """Get a file's code chunks plus semantically related chunks.
 
 Usage:

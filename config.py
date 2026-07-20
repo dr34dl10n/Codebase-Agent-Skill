@@ -225,6 +225,11 @@ class ParseConfig:
         "dist", "build", ".next", ".nuxt", "target", "vendor",
         ".tox", ".mypy_cache", ".pytest_cache", ".idea", ".vscode",
     })
+    # Path segments to skip (matched against any part of the relative path)
+    # Targets data dumps that are committed to git but aren't source code.
+    skip_path_segments: set = field(default_factory=lambda: {
+        "assets/data", "output/json",
+    })
 
 
 @dataclass

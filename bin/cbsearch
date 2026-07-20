@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/data/codebase-skill/.venv/bin/python3
 """Semantic code search across indexed codebases.
 
 Usage:
