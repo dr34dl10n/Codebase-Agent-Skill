@@ -86,6 +86,9 @@ class CodeIndexer:
             try:
                 chunks = parse_file(fpath, self.config.parse)
                 all_chunks.extend(chunks)
+                # Store verbatim source as ground truth (EMERGENCY.md BUG #4):
+                # enables file reconstruction when the file is lost on disk.
+                self._upsert_file_source(conn, fpath, self.config.parse)
             except Exception as e:
                 logger.warning(f"Parse error on {fpath}: {e}")
 
@@ -153,8 +156,34 @@ class CodeIndexer:
                 changed.append(f)  # Include if we can't stat
         return changed
 
+    def _upsert_file_source(self, conn, file_path: str, parse_config) -> None:
+        """Store the verbatim source of a file in file_sources (ground truth)."""
+        try:
+            from pathlib import Path as _P
+            p = _P(file_path)
+            language = parse_config.supported_extensions.get(p.suffix)
+            content = p.read_bytes().decode("utf-8", errors="replace")
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO file_sources (file_path, language, content, indexed_at) "
+                    "VALUES (%s, %s, %s, now()) "
+                    "ON CONFLICT (file_path) DO UPDATE SET "
+                    "language = EXCLUDED.language, content = EXCLUDED.content, indexed_at = now()",
+                    (file_path, language, content),
+                )
+        except OSError:
+            pass
+
     def _delete_file_chunks(self, conn, file_paths: list[str]) -> None:
-        """Remove all chunks belonging to given file paths."""
+        """Remove chunks belonging to given file paths.
+
+        Note: file_sources (ground truth) is intentionally NOT deleted here.
+        This method is called both when re-indexing changed files (where the
+        upsert already refreshed the source) and when purging orphan files
+        (where the stored source is the recovery ground truth — see
+        EMERGENCY.md BUG #4). file_sources is only purged on explicit
+        repo removal (`remove`).
+        """
         if not file_paths:
             return
         with conn.cursor() as cur:
@@ -271,6 +300,7 @@ class CodeIndexer:
                 (repo + "/%",),
             )
             deleted = cur.rowcount
+            cur.execute("DELETE FROM file_sources WHERE file_path LIKE %s", (repo + "/%",))
             cur.execute("DELETE FROM projects WHERE path = %s", (repo,))
         conn.commit()
         logger.info(f"Removed {deleted} chunks for {repo}")

@@ -1,7 +1,7 @@
 ---
 name: codebase-skill
 description: "Use when indexing or semantically searching a codebase. Tree-sitter parsing, pgvector storage, embedding service for RAG."
-version: 1.2.0
+version: 1.3.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -33,10 +33,11 @@ Query → Embed service → cosine similarity search → ranked chunks
 ```
 
 Components:
-- `parser.py` — Tree-sitter based chunking (by function/class, not naive splitting)
+- `parser.py` — Tree-sitter based chunking (by function/class, not naive splitting); slices raw **bytes** so chunk content is verbatim source even with multi-byte chars
 - `embedder.py` — Embedding providers (ModernBERT via sentence-transformers; Ollama optional)
-- `indexer.py` — Repository walker + incremental reindexing + orphan purge
-- `search.py` — Cosine similarity search with filters
+- `indexer.py` — Repository walker + incremental reindexing + orphan purge; stores verbatim file source in `file_sources` (ground truth)
+- `search.py` — Cosine similarity search with filters; `file_context` returns full file content (disk or `file_sources` fallback) + related chunks
+- `init_db.sql` — Schema: `code_chunks` (embeddings) + `file_sources` (verbatim source, recovery ground truth)
 - `api.py` — FastAPI server (HTTP endpoints + MCP tool definitions)
 - `cli.py` — CLI interface for terminal use
 - `mcp_server.py` — MCP stdio server exposing 5 tools
@@ -137,11 +138,30 @@ A cron job (`codebase-auto-reindex`) runs `auto_reindex.py` every 4h, which:
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `search` | query, top_k, language, file_pattern, repo_path, min_score | Semantic search across indexed codebases |
-| `file_context` | file_path, focus, top_k | File's chunks + related chunks |
+| `search` | query, top_k, language, file_pattern, repo_path, min_score | Semantic search — returns **verbatim source** chunks with exact `start_line`/`end_line` |
+| `file_context` | file_path, focus, top_k | One call: full verbatim file content + chunk map (line ranges) + related chunks from other files. Falls back to `file_sources` ground truth if the file is missing from disk |
 | `stats` | repo_path? | Indexing statistics |
-| `reindex` | repo_path, force_reindex | Refresh repo: detect changes + purge deleted files |
+| `reindex` | repo_path, force_reindex | Refresh repo: detect changes + purge deleted chunks |
 | `list_projects` | (none) | List all indexed repositories |
+
+## Token Economy — Read Less, Search More
+
+Every chunk returned by `search` is **verbatim source** with exact line ranges —
+not a summary. This is what makes the skill a real token saver:
+
+- **A `search` hit is usually enough to act.** The chunk IS the code. Don't
+  `read` the file again just to re-fetch what the chunk already gave you.
+- **Need surrounding context?** Read only the chunk's line range
+  (`offset=start_line, limit=end_line-start_line+N`), not the whole file.
+- **Need a whole file + its dependencies?** One `file_context` call returns the
+  full verbatim file content, the file's chunk map, AND related chunks from
+  *other* files — replacing several `read` calls plus a separate dependency
+  search in a single round trip.
+- **Lost file? No problem.** `file_context` recovers a file that's missing from
+  disk from the `file_sources` ground truth stored at index time.
+
+Rule of thumb: **`search` → act on the chunk. `file_context` → understand a
+file + its neighborhood. `read` → only the narrowest range you must edit.**
 
 ## Search Filters
 
@@ -183,7 +203,7 @@ Python, JavaScript, TypeScript, TSX, JSX, Go, Rust, Java, C, C++, C#, Ruby, PHP,
 
 5. **Zero vectors on embedding failure.** If the embedding service is down, embeddings become zero vectors. Search still works but returns random results. Check logs.
 
-6. **Module-level chunks may capture decorator lines.** For Python, `@dataclass` decorators before classes appear in both module and definition chunks if overlap detection fails.
+6. **Module-level chunks capture contiguous runs.** The parser groups module-level code (imports, constants, bare statements) into contiguous byte-range runs that match the source verbatim — no stripping, no min-size filter — so nothing (imports included) is lost and line numbers reconstruct cleanly.
 
 7. **File path in chunks is absolute.** Searching with relative paths won't match. Always use absolute paths or LIKE patterns.
 

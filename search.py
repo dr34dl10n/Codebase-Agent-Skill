@@ -162,12 +162,23 @@ class CodeSearcher:
             for r in file_rows
         ]
 
-        # Read the actual file if it exists
+        # Read the actual file if it exists; otherwise fall back to the
+        # verbatim source stored in file_sources (ground truth) so a lost
+        # file can still be reconstructed (EMERGENCY.md BUG #4).
         file_content = None
         try:
             file_content = Path(file_path).read_text(errors="replace")
         except OSError:
             pass
+        if file_content is None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT content FROM file_sources WHERE file_path = %s",
+                    (file_path,),
+                )
+                row = cur.fetchone()
+                if row is not None:
+                    file_content = row[0]
 
         # Find related chunks from other files
         related = []

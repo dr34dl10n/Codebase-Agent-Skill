@@ -83,6 +83,49 @@ def _extract_symbol_name(node: Node) -> str:
     return "<anonymous>"
 
 
+def _find_def_node(node: Node) -> Optional[Node]:
+    """Return the underlying function/class node, unwrapping decorators."""
+    if node.type == "decorated_definition":
+        for c in node.children:
+            if c.type in ("function_definition", "class_definition"):
+                return c
+        return None
+    return node
+
+
+def _extract_python_docstring(def_node: Node) -> Optional[str]:
+    """Best-effort extraction of a Python docstring from a def/class node.
+
+    Returns the docstring text (quotes stripped) or None. Defensive: any
+    parse-layout mismatch yields None rather than raising.
+    """
+    try:
+        real = _find_def_node(def_node)
+        if real is None:
+            return None
+        body = None
+        for c in real.children:
+            if c.type == "block":
+                body = c
+                break
+        if body is None or not body.children:
+            return None
+        first = body.children[0]
+        if first is None or first.type != "expression_statement":
+            return None
+        for sub in first.children:
+            if sub.type == "string":
+                raw = sub.text.decode("utf-8", errors="replace").strip()
+                for q in ('"""', "'''", '"', "'"):
+                    if len(raw) >= 2 * len(q) and raw.startswith(q) and raw.endswith(q):
+                        raw = raw[len(q):-len(q)]
+                        break
+                return raw.strip() or None
+        return None
+    except Exception:
+        return None
+
+
 def _collect_top_level_defs(node: Node, language: str) -> list[tuple[str, Node]]:
     """Collect ONLY top-level definition nodes (functions, classes, etc).
     
@@ -123,9 +166,10 @@ def parse_file(file_path: str, config: ParseConfig) -> list[CodeChunk]:
         return []
     
     try:
-        source = path.read_text(errors="replace")
-    except (OSError, UnicodeDecodeError):
+        source_bytes = path.read_bytes()
+    except OSError:
         return []
+    source = source_bytes.decode("utf-8", errors="replace")
     
     if not source.strip():
         return []
@@ -142,7 +186,9 @@ def parse_file(file_path: str, config: ParseConfig) -> list[CodeChunk]:
 
     try:
         parser = _get_parser(language)
-        tree = parser.parse(source.encode("utf-8"))
+        # tree-sitter works on BYTES — parse the raw bytes so that
+        # node.start_byte / node.end_byte are valid offsets into source_bytes.
+        tree = parser.parse(source_bytes)
         root = tree.root_node
         
         # Collect ONLY top-level definitions
@@ -159,36 +205,66 @@ def parse_file(file_path: str, config: ParseConfig) -> list[CodeChunk]:
                         return True
                 return False
             
-            # 1. Capture module-level code (NOT covered by any definition)
-            module_parts = []
-            module_start_line = None
+            # 1. Capture module-level code as CONTIGUOUS runs of non-covered
+            # root children. Each run spans the exact byte range from the first
+            # to the last child in the run (including any whitespace between
+            # them), so the chunk content matches the source verbatim and can
+            # be reassembled by line number. We deliberately do NOT strip the
+            # content and do NOT apply min_chunk_size (those caused lost
+            # imports and broken line reconstruction — see EMERGENCY.md #2/#3/#5).
+            runs: list[tuple[int, int, int, int]] = []
+            run_first: Optional[Node] = None
+            run_last: Optional[Node] = None
+            
+            def flush_run() -> None:
+                nonlocal run_first, run_last
+                if run_first is not None:
+                    runs.append((
+                        run_first.start_byte,
+                        run_last.end_byte,
+                        run_first.start_point[0] + 1,
+                        run_last.end_point[0] + 1,
+                    ))
+                    run_first = run_last = None
+            
             for child in root.children:
                 if is_covered(child):
+                    flush_run()
                     continue
-                text = source[child.start_byte:child.end_byte].strip()
-                if text and len(text) >= config.min_chunk_size:
-                    if module_start_line is None:
-                        module_start_line = child.start_point[0] + 1
-                    module_parts.append(text)
+                if run_first is None:
+                    run_first = child
+                run_last = child
+            flush_run()
             
-            if module_parts:
-                mod_content = "\n\n".join(module_parts)
-                if len(mod_content) >= config.min_chunk_size:
-                    chunks.append(CodeChunk(
-                        file_path=file_path,
-                        language=language,
-                        symbol="<module>",
-                        content=mod_content,
-                        start_line=module_start_line or 1,
-                        end_line=root.child_count and root.children[-1].end_point[0] + 1 or 1,
-                        metadata={"type": "module_level"},
-                    ))
+            for start_byte, end_byte, start_line, end_line in runs:
+                mod_content = source_bytes[start_byte:end_byte].decode("utf-8", errors="replace")
+                # Skip purely-whitespace runs but keep everything else
+                # (even single short imports) so nothing is lost.
+                if not mod_content.strip():
+                    continue
+                chunks.append(CodeChunk(
+                    file_path=file_path,
+                    language=language,
+                    symbol="<module>",
+                    content=mod_content,
+                    start_line=start_line,
+                    end_line=end_line,
+                    metadata={"type": "module_level"},
+                ))
             
             # 2. Capture each top-level definition as a chunk
             for symbol_name, node in defs:
-                content = source[node.start_byte:node.end_byte]
+                # Slice the BYTES (not the str) — node offsets are byte offsets.
+                # See EMERGENCY.md BUG #1: slicing a str with byte offsets
+                # corrupts content whenever the file has multi-byte chars.
+                content = source_bytes[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
                 if len(content) < config.min_chunk_size:
                     continue
+                meta = {"type": "definition"}
+                if language == "python":
+                    doc = _extract_python_docstring(node)
+                    if doc:
+                        meta["summary"] = doc
                 chunks.append(CodeChunk(
                     file_path=file_path,
                     language=language,
@@ -196,7 +272,7 @@ def parse_file(file_path: str, config: ParseConfig) -> list[CodeChunk]:
                     content=content,
                     start_line=node.start_point[0] + 1,
                     end_line=node.end_point[0] + 1,
-                    metadata={"type": "definition"},
+                    metadata=meta,
                 ))
         else:
             # No definitions found — fall back to line-based chunking
