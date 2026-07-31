@@ -1,0 +1,8 @@
+#!/data/codebase-skill/.venv/bin/python3
+"""Wrapper for scripts/list_projects.py (kept in bin/ for PATH convenience)."""
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Delegate to the real implementation.
+sys.argv[0] = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "scripts", "list_projects.py")
+exec(open(sys.argv[0]).read())
