@@ -63,10 +63,12 @@ class CodeIndexer:
 
         # Get or create project record
         proj = self._upsert_project(conn, str(repo), name)
-        
+
         # Find all parseable files on disk
+        t0 = time.time()
         files_on_disk = set(walk_repository(str(repo), self.config.parse))
-        logger.info(f"Found {len(files_on_disk)} parseable files in {repo}")
+        t_walk = time.time() - t0
+        logger.info(f"Found {len(files_on_disk)} parseable files in {repo} (walk {t_walk:.2f}s)")
 
         # Purge chunks for files that no longer exist on disk
         deleted_orphans = self._purge_deleted_files(conn, str(repo), files_on_disk)
@@ -81,6 +83,7 @@ class CodeIndexer:
                 logger.info(f"{len(files_on_disk)} files changed since last index")
 
         # Parse all files into chunks
+        t0 = time.time()
         all_chunks: list[CodeChunk] = []
         for fpath in files_on_disk:
             try:
@@ -91,15 +94,16 @@ class CodeIndexer:
                 self._upsert_file_source(conn, fpath, self.config.parse)
             except Exception as e:
                 logger.warning(f"Parse error on {fpath}: {e}")
+        t_parse = time.time() - t0
 
-        logger.info(f"Parsed {len(all_chunks)} chunks from {len(files_on_disk)} files")
+        logger.info(f"Parsed {len(all_chunks)} chunks from {len(files_on_disk)} files (parse {t_parse:.2f}s)")
 
         # Delete stale chunks for changed files (old chunks from these files)
         if files_on_disk:
             self._delete_file_chunks(conn, [str(Path(f)) for f in files_on_disk])
 
         # Embed and store chunks in batches
-        stored = self._embed_and_store(conn, all_chunks)
+        stored, t_embed, t_store = self._embed_and_store(conn, all_chunks)
 
         # Update project metadata
         total = self._count_chunks(conn, str(repo))
@@ -120,6 +124,12 @@ class CodeIndexer:
             "orphan_chunks_purged": deleted_orphans,
             "total_chunks": total,
             "elapsed_seconds": round(elapsed, 2),
+            "phase_seconds": {
+                "walk": round(t_walk, 2),
+                "parse": round(t_parse, 2),
+                "embed": round(t_embed, 2),
+                "store": round(t_store, 2),
+            },
         }
         logger.info(f"Indexing complete: {stats}")
         return stats
@@ -195,28 +205,34 @@ class CodeIndexer:
         conn.commit()
         logger.debug(f"Deleted stale chunks for {len(file_paths)} files")
 
-    def _embed_and_store(self, conn, chunks: list[CodeChunk]) -> int:
-        """Embed chunks and insert into database. Returns count stored."""
+    def _embed_and_store(self, conn, chunks: list[CodeChunk]) -> tuple[int, float, float]:
+        """Embed chunks and insert into database. Returns (count, embed_time, store_time)."""
         if not chunks:
-            return 0
+            return 0, 0.0, 0.0
 
         stored = 0
         batch_size = self.config.embed.batch_size
+        t_embed_total = 0.0
+        t_store_total = 0.0
+        n_batches = (len(chunks) - 1) // batch_size + 1
 
         for i in range(0, len(chunks), batch_size):
             batch = chunks[i:i + batch_size]
             texts = [c.content for c in batch]
-            
+
             # Generate embeddings
-            print(f"  Embedding batch {i//batch_size + 1}/{(len(chunks)-1)//batch_size + 1} ({len(batch)} chunks)...")
+            print(f"  Embedding batch {i//batch_size + 1}/{n_batches} ({len(batch)} chunks)...")
+            t0 = time.time()
             embeddings = self._embedder.embed(texts)
-            
+            t_embed_total += time.time() - t0
+
             # Insert into DB
+            t0 = time.time()
             with conn.cursor() as cur:
                 for chunk, emb in zip(batch, embeddings):
                     try:
                         cur.execute(
-                            """INSERT INTO code_chunks 
+                            """INSERT INTO code_chunks
                                (file_path, language, symbol, content, summary,
                                 start_line, end_line, metadata, embedding)
                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
@@ -235,11 +251,12 @@ class CodeIndexer:
                         stored += 1
                     except Exception as e:
                         logger.warning(f"Insert failed for {chunk.file_path}:{chunk.symbol}: {e}")
-            
+
             conn.commit()
+            t_store_total += time.time() - t0
             logger.debug(f"Stored batch {i//batch_size + 1}: {len(batch)} chunks")
 
-        return stored
+        return stored, t_embed_total, t_store_total
 
     def _count_chunks(self, conn, repo_path: str) -> int:
         """Count total chunks for a repository."""

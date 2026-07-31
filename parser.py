@@ -257,7 +257,11 @@ def parse_file(file_path: str, config: ParseConfig) -> list[CodeChunk]:
                     metadata={"type": "module_level"},
                 ))
             
-            # 2. Capture each top-level definition as a chunk
+            # 2. Capture each top-level definition as a chunk.
+            # Size bounding is applied uniformly to ALL chunks by a final pass
+            # at the end of parse_file (_enforce_max_size), so a large class is
+            # split into contiguous verbatim sub-chunks (see ACCELERATION.md:
+            # embedding time on CPU grows super-linearly with chunk length).
             for symbol_name, node in defs:
                 # Slice the BYTES (not the str) — node offsets are byte offsets.
                 # See EMERGENCY.md BUG #1: slicing a str with byte offsets
@@ -285,8 +289,13 @@ def parse_file(file_path: str, config: ParseConfig) -> list[CodeChunk]:
     
     except Exception:
         chunks.extend(_chunk_by_lines(source, file_path, language, config))
-    
-    return chunks
+
+    # Final uniform size-bounding pass: split any chunk (definition,
+    # module-level run, or line-based) that exceeds max_chunk_size into
+    # contiguous verbatim sub-chunks. Embedding time on CPU grows
+    # super-linearly with sequence length, so this is the dominant
+    # performance lever (see ACCELERATION.md). Line numbers are preserved.
+    return _enforce_max_size(chunks, config)
 
 
 def _chunk_by_lines(
@@ -329,6 +338,99 @@ def _chunk_by_lines(
             ))
     
     return chunks
+
+
+def _enforce_max_size(chunks: list[CodeChunk], config: ParseConfig) -> list[CodeChunk]:
+    """Split any chunk exceeding max_chunk_size into contiguous sub-chunks.
+
+    Applied uniformly to every chunk produced by parse_file (definitions,
+    module-level runs, line-based fallback) so that no single chunk dominates
+    embedding time on CPU (see ACCELERATION.md).
+    """
+    out: list[CodeChunk] = []
+    for ch in chunks:
+        if len(ch.content) <= config.max_chunk_size:
+            out.append(ch)
+        else:
+            out.extend(_split_definition(
+                content=ch.content,
+                file_path=ch.file_path,
+                language=ch.language,
+                symbol_name=ch.symbol,
+                start_line=ch.start_line,
+                end_line=ch.end_line,
+                config=config,
+                metadata=ch.metadata,
+            ))
+    return out
+
+
+def _split_definition(
+    content: str,
+    file_path: str,
+    language: str,
+    symbol_name: str,
+    start_line: int,
+    end_line: int,
+    config: ParseConfig,
+    metadata: dict,
+) -> list[CodeChunk]:
+    """Split a definition whose content exceeds max_chunk_size into
+    contiguous verbatim sub-chunks (by line).
+
+    Tree-sitter extracts whole definitions regardless of size: a large class
+    can be tens of KB, and embedding such a chunk on CPU is super-linear and
+    can take tens of seconds each. Splitting keeps every sub-chunk at or below
+    max_chunk_size so embedding stays fast, while preserving exact line ranges
+    so the file remains reconstructable from its chunks (see EMERGENCY.md).
+
+    The first sub-chunk keeps the original symbol name (so searching for the
+    class/function name still finds it); subsequent sub-chunks are suffixed
+    '#part2', '#part3', ... so they are still identifiable to the same def.
+    """
+    if len(content) <= config.max_chunk_size:
+        return [CodeChunk(
+            file_path=file_path, language=language, symbol=symbol_name,
+            content=content, start_line=start_line, end_line=end_line,
+            metadata=dict(metadata),
+        )]
+
+    lines = content.split("\n")
+    out: list[CodeChunk] = []
+    cur: list[str] = []
+    cur_chars = 0
+    cur_start_line = start_line
+    part = 1
+
+    for i, line in enumerate(lines):
+        add = len(line) + 1  # +1 for the '\n' that split() removed
+        # Flush the current accumulation if appending this line would overflow.
+        # (Always keep at least one line, even if a single line exceeds the
+        # limit — we never split mid-line.)
+        if cur and cur_chars + add > config.max_chunk_size:
+            out.append(CodeChunk(
+                file_path=file_path, language=language,
+                symbol=symbol_name if part == 1 else f"{symbol_name}#part{part}",
+                content="\n".join(cur),
+                start_line=cur_start_line, end_line=start_line + i - 1,
+                metadata=dict(metadata),
+            ))
+            part += 1
+            cur = []
+            cur_chars = 0
+            cur_start_line = start_line + i
+        cur.append(line)
+        cur_chars += add
+
+    if cur:
+        out.append(CodeChunk(
+            file_path=file_path, language=language,
+            symbol=symbol_name if part == 1 else f"{symbol_name}#part{part}",
+            content="\n".join(cur),
+            start_line=cur_start_line, end_line=end_line,
+            metadata=dict(metadata),
+        ))
+    return out
 
 
 def _parse_gitignore(repo_path: Path) -> list[str]:
