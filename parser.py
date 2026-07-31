@@ -382,6 +382,38 @@ def _matches_skip_segment(rel_path: str, skip_segments: set[str]) -> bool:
     return False
 
 
+def _is_dev_irrelevant(rel_path: str, config: ParseConfig) -> bool:
+    """Return True if a file (by repo-relative path) is not useful dev source.
+
+    Applied to `git ls-files` results so indexing stays focused on hand-written
+    code, mirroring the dir pruning the os.walk fallback already performs.
+
+    A path is skipped when ANY of:
+      - an ancestor component is a known non-source dir (config.skip_dirs);
+      - an ancestor component is hidden (starts with '.', e.g. .git, .venv,
+        .gradle, .idea, .next) — excludes all VCS/tooling state GLOBALLY,
+        regardless of the skip_dirs list;
+      - the relative path contains a data-dump segment (skip_path_segments);
+      - the basename matches a generated / minified / lockfile pattern
+        (skip_filename_patterns).
+    The file's own name is never tested against the dir rules, so a file named
+    e.g. `build.py` at the repo root is still indexed.
+    """
+    normalized = rel_path.replace("\\", "/")
+    parts = normalized.split("/")
+    # ancestors only — never the file itself
+    for part in parts[:-1]:
+        if part in config.skip_dirs or part.startswith("."):
+            return True
+    if _matches_skip_segment(normalized, config.skip_path_segments):
+        return True
+    basename = parts[-1]
+    for pat in config.skip_filename_patterns:
+        if fnmatch.fnmatch(basename, pat):
+            return True
+    return False
+
+
 def _git_ls_files(repo: Path, config: ParseConfig) -> Optional[list[str]]:
     """Use `git ls-files` to get tracked files (respects .gitignore natively).
 
@@ -411,7 +443,7 @@ def _git_ls_files(repo: Path, config: ParseConfig) -> Optional[list[str]]:
         ext = Path(line).suffix
         if ext not in config.supported_extensions:
             continue
-        if _matches_skip_segment(line, config.skip_path_segments):
+        if _is_dev_irrelevant(line, config):
             continue
         files.append(fpath)
     return files
@@ -453,6 +485,8 @@ def walk_repository(repo_path: str, config: ParseConfig) -> list[str]:
             fpath = os.path.join(root, fname)
             ext = Path(fname).suffix
             if ext not in config.supported_extensions:
+                continue
+            if any(fnmatch.fnmatch(fname, p) for p in config.skip_filename_patterns):
                 continue
             if ignore_patterns and _is_ignored(Path(fpath), repo, ignore_patterns):
                 continue
