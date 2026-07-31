@@ -210,7 +210,9 @@ class ParseConfig:
         ".php": "php",
         ".swift": "swift",
         ".kt": "kotlin",
+        ".kts": "kotlin",  # Kotlin scripts (e.g. Gradle build.gradle.kts)
         ".scala": "scala",
+        ".xml": "xml",  # No tree-sitter grammar bundled → line-chunked in parser
         ".lua": "lua",
         ".r": "r",
         ".sh": "bash",

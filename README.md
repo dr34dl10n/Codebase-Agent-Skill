@@ -238,6 +238,29 @@ Python, JavaScript, TypeScript, TSX, JSX, Go, Rust, Java, C, C++, C#, Ruby, PHP,
 
 Don't see yours? Tree-sitter supports [many more](https://tree-sitter.github.io/tree-sitter/) — just add the grammar.
 
+> **Note on `.kts` / `.xml`:** Kotlin scripts (`.kts`, e.g. Gradle `build.gradle.kts`) are
+> parsed with the bundled Kotlin grammar. XML (`.xml` — Android manifests, resources) has
+> no grammar bundled in `tree-sitter-languages` 1.10.2, so it is chunked by lines
+> (`parser.py::_chunk_by_lines`, same path as Markdown). See the roadmap below.
+
+### Roadmap — evaluate upstream evolution of core bricks
+
+The parser currently pins **`tree-sitter==0.21.3`** and **`tree-sitter-languages==1.10.2`**
+(old `Language(path, name)` API). This bundle lacks grammars such as **`xml`**
+(`tree_sitter_xml` symbol is absent from `languages.so`). Before any language
+expansion, evaluate:
+
+- Upgrade to a recent `tree-sitter-languages` (≥ 1.11) + `tree-sitter` (≥ 0.23), which
+  bundles more grammars (incl. xml) — **but** this moves to the new `Language(ptr)` API
+  and breaks `parser.py::_get_parser`; a migration is required.
+- Alternative: load dedicated PyPI grammar packages (`tree-sitter-xml`, etc.) and register
+  them in a custom registry ahead of `tree_sitter_languages.get_parser`.
+- Until then, format configs without useful definitions (xml, properties, ini…) keep using
+  the dependency-free line-chunker.
+
+Action item: schedule a **spike** to upgrade `tree-sitter`/`tree-sitter-languages` and
+measure the migration cost vs. benefit (new grammars, XML semantic chunking).
+
 ---
 
 ## Quick Start

@@ -181,7 +181,12 @@ def parse_file(file_path: str, config: ParseConfig) -> list[CodeChunk]:
     # This crashes the entire process — cannot be caught with try/except.
     # For markdown, line-based chunking is sufficient (no function definitions
     # to extract) and avoids the crash entirely.
-    if language == "markdown":
+    #
+    # XML is routed here too: tree-sitter-languages (1.10.2) does not bundle an
+    # xml grammar, and Android manifest/strings.xml are small config files
+    # without function-like definitions — line-based chunking is sufficient
+    # and avoids depending on an extra tree-sitter package.
+    if language in ("markdown", "xml"):
         return _chunk_by_lines(source, file_path, language, config)
 
     try:
