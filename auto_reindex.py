@@ -44,32 +44,35 @@ def main():
     with CodeIndexer(config) as indexer:
         projects = indexer.list_projects()
 
-    if not projects:
-        print("No indexed repositories. Nothing to do.")
-        return
+        if not projects:
+            print("No indexed repositories. Nothing to do.")
+            return
 
-    results = []
-    for proj in projects:
-        repo_path = proj["path"]
-        if not Path(repo_path).is_dir():
-            results.append(f"SKIP {repo_path} (directory gone)")
-            continue
+        results = []
+        for proj in projects:
+            repo_path = proj["path"]
+            if not Path(repo_path).is_dir():
+                results.append(f"SKIP {repo_path} (directory gone)")
+                continue
 
-        with CodeIndexer(config) as indexer:
+            # Reuse the same indexer (and its already-loaded model) for every
+            # project. Previously this created + closed a CodeIndexer per
+            # project, reloading the embedding model N times — the dominant
+            # cost on CPU.
             stats = indexer.index_repository(
                 repo_path=repo_path,
                 force_reindex=force,
             )
 
-        if stats["files_processed"] > 0 or stats["orphan_chunks_purged"] > 0:
-            results.append(
-                f"OK {repo_path}: {stats['files_processed']} files, "
-                f"{stats['chunks_stored']} stored, "
-                f"{stats['orphan_chunks_purged']} orphans purged "
-                f"({stats['elapsed_seconds']}s)"
-            )
-        else:
-            results.append(f"OK {repo_path}: up to date")
+            if stats["files_processed"] > 0 or stats["orphan_chunks_purged"] > 0:
+                results.append(
+                    f"OK {repo_path}: {stats['files_processed']} files, "
+                    f"{stats['chunks_stored']} stored, "
+                    f"{stats['orphan_chunks_purged']} orphans purged "
+                    f"({stats['elapsed_seconds']}s)"
+                )
+            else:
+                results.append(f"OK {repo_path}: up to date")
 
     # Print summary — cron will deliver this
     print(f"Auto-reindex report ({'force' if force else 'incremental'}):")

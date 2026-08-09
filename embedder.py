@@ -168,16 +168,57 @@ class SentenceTransformerProvider(EmbeddingProvider):
         pass
 
 
+# Module-level cache of loaded providers, keyed by (model, backend, api_base).
+# Loading a sentence-transformers model into RAM takes a few seconds and is
+# pure waste when repeated across indexings in the same process (MCP server,
+# auto_reindex loop, CLI). The HF cache already prevents re-DOWNLOAD, but the
+# in-process re-LOAD is the real cost. We reuse the live instance as long as
+# the model/backend don't change.
+# NOTE: providers are now shared long-lived — their close() must be safe to
+# never call on a cached instance (SentenceTransformerProvider.close is a
+# no-op; OllamaProvider's client is intentionally left open). CodeIndexer
+# no longer closes the embedder.
+_PROVIDER_CACHE: dict[tuple, EmbeddingProvider] = {}
+
+
 def create_provider(config: Optional[EmbedConfig] = None) -> EmbeddingProvider:
-    """Factory: return the right embedding provider based on config.backend."""
+    """Factory: return the right embedding provider based on config.backend.
+
+    Cached: a subsequent call with the same (model, backend, api_base) returns
+    the already-loaded instance instead of reloading the model into memory.
+    Use reset_provider_cache() to force a reload (e.g. after switching model).
+    """
     config = config or EmbedConfig()
+    key = (config.model, config.backend, config.api_base)
+
+    cached = _PROVIDER_CACHE.get(key)
+    if cached is not None:
+        logger.info(f"Reusing cached embedding provider (model={config.model}, backend={config.backend})")
+        return cached
 
     if config.backend == "sentence_transformers":
-        return SentenceTransformerProvider(config)
+        provider = SentenceTransformerProvider(config)
     elif config.backend == "ollama":
-        return OllamaProvider(config)
+        provider = OllamaProvider(config)
     else:
         raise ValueError(
             f"Unknown embedding backend '{config.backend}'. "
             f"Use 'ollama' or 'sentence_transformers'."
         )
+
+    _PROVIDER_CACHE[key] = provider
+    return provider
+
+
+def reset_provider_cache() -> None:
+    """Drop all cached providers (close them) and clear the cache.
+
+    Call after switching models/backends at runtime, or to free the memory
+    held by a previously loaded model.
+    """
+    for provider in _PROVIDER_CACHE.values():
+        try:
+            provider.close()
+        except Exception:
+            pass
+    _PROVIDER_CACHE.clear()

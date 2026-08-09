@@ -324,9 +324,12 @@ class CodeIndexer:
         return deleted
 
     def close(self):
+        # Close the DB connection but NOT the embedder: providers are now
+        # cached at module level (embedder._PROVIDER_CACHE) and shared across
+        # indexers, so closing one here would break the cache for the next
+        # indexing run in the same process.
         if self._conn and not self._conn.closed:
             self._conn.close()
-        self._embedder.close()
 
     def __enter__(self):
         return self

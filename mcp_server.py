@@ -49,14 +49,30 @@ from indexer import CodeIndexer
 
 app = Server("codebase-skill")
 
-# Lazy factories — created per call to avoid stale connections
+# Lazy factories. The indexer is a process-wide singleton: the MCP server is
+# long-lived, and the expensive part (loading the embedding model into RAM) is
+# cached at the embedder level anyway. Keeping one indexer also reuses its DB
+# connection. On a connection error we drop and recreate it (_reset_indexer).
+_indexer_singleton: CodeIndexer | None = None
+
 def _search() -> CodeSearcher:
     config = AppConfig()
     return CodeSearcher(config)
 
 def _indexer() -> CodeIndexer:
-    config = AppConfig()
-    return CodeIndexer(config)
+    global _indexer_singleton
+    if _indexer_singleton is None:
+        _indexer_singleton = CodeIndexer(AppConfig())
+    return _indexer_singleton
+
+def _reset_indexer() -> None:
+    global _indexer_singleton
+    if _indexer_singleton is not None:
+        try:
+            _indexer_singleton.close()
+        except Exception:
+            pass
+    _indexer_singleton = None
 
 
 @app.list_tools()
@@ -231,16 +247,24 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(type="text", text=json.dumps(stats, indent=2))]
 
         elif name == "reindex":
-            with _indexer() as indexer:
+            try:
+                indexer = _indexer()
                 result = indexer.index_repository(
                     repo_path=arguments["repo_path"],
                     force_reindex=arguments.get("force_reindex", False),
                 )
+            except Exception:
+                _reset_indexer()
+                raise
             return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
 
         elif name == "list_projects":
-            with _indexer() as indexer:
+            try:
+                indexer = _indexer()
                 projects = indexer.list_projects()
+            except Exception:
+                _reset_indexer()
+                raise
             if not projects:
                 return [TextContent(type="text", text="No indexed repositories.")]
             lines = []
